@@ -1422,7 +1422,9 @@ def receber_mensagem():
 			  - Se for uma ENCOMENDA ("registrar_encomenda"), NÃO precisa do aviso de "chefe na rua", pois encomendas são para horários futuros e serão aprovadas depois.
 			10. ÁUDIOS E MENSAGENS INCOMPLETAS: Use APENAS a ação "conversar" e responda pedindo para repetir se a mensagem for confusa.
 			11. EXTRATO DE FIADO E CONFERÊNCIA: Se o cliente perguntar o que está devendo, pedir a conta, use IMEDIATAMENTE a ação "consultar_meu_extrato".
-			12. ACRÉSCIMOS DE PEDIDOS: Se o cliente pedir mais itens em uma nova mensagem, a ação "registrar_venda" DEVE conter APENAS os novos itens.
+			12. CORREÇÕES E ACRÉSCIMOS: 
+			  - Se o cliente pedir mais itens (ex: "quero também uma rosca"), use "registrar_venda" APENAS para os itens novos. 
+			  - Se o cliente usar palavras de correção como "na verdade", "mudei de ideia", "não é mais X, é Y", ou diminuir a quantidade do que acabou de pedir, você DEVE OBRIGATORIAMENTE retornar a ação "cancelar_pedido" primeiro para limpar o erro. Após o cancelamento ser processado, o cliente pedirá novamente ou você anotará o novo valor em uma mensagem separada. NUNCA registre uma nova venda de um item que o cliente está tentando corrigir sem cancelar a anterior antes.
 			13. FORMATAÇÃO DO MENU: Formate o cardápio como uma lista visual com emojis (ex: 🍰, 🥖).
 			14. PRIVACIDADE DE CONTATO: NUNCA chame o cliente pelo "Nome do contato no WhatsApp" na sua "resposta_amigavel".
 			15. REGISTRO INSTANTÂNEO (BIPE DIRETO): Assim que o cliente pedir um item, use IMEDIATAMENTE a ação "registrar_venda".
