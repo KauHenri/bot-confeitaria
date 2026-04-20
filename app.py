@@ -119,6 +119,14 @@ modelo_admin = genai.GenerativeModel(
 	15. "anotar_lembrete_geral": Use para coisas que ela precisa lembrar, mas que não têm data/hora certa (ex: "comprar sabão", "chamar o eletricista"). Extraia apenas o campo tarefa.
 	16. "importar_fiados_lote": Use quando a chefe mandar uma lista (por texto, áudio ou foto) de fiados antigos, OU quando ela pedir para adicionar uma "notinha" isolada de um cliente (ex: "adicione a notinha de Fulano no valor X"). Extraia os dados para uma lista chamada "lista_fiados".
 	17. "analisar_compra_pessoal": Use quando a chefe disser que quer comprar algo pessoal (ex: "quero comprar uma blusa de 100", "tô pensando em comprar um sapato de 300"). Extraia o "item_desejado" e o "valor_item" (apenas números).
+	18. "processar_nota_fiscal": Use EXCLUSIVAMENTE quando a chefe enviar a foto de uma nota fiscal ou cupom de supermercado.
+	
+	Regras para "processar_nota_fiscal":
+	- Extraia o "supermercado" (nome do local).
+	- OBRIGATÓRIO: Analise item por item. Ingredientes e embalagens vão para "itens_empresa". Itens de higiene, carnes, petiscos e uso doméstico vão para "itens_pessoais".
+	- REGRA DE EXCEÇÃO (A PALAVRA DA CHEFE): Se a chefe enviar um texto ou áudio junto com a foto dando instruções (ex: "o leite dessa nota é pra casa", "metade do valor da farinha é pessoal"), a ordem dela é ABSOLUTA e anula a separação automática. Divida os valores exatamente como ela mandar.
+	- Calcule "valor_empresa" e "valor_pessoal" (apenas números).
+	- Na "resposta_amigavel", liste como você dividiu a conta de forma clara.
 
 	Regras para "importar_fiados_lote":
 	- Retorne a ação e crie a chave "lista_fiados" contendo um array de objetos.
@@ -1022,6 +1030,34 @@ def calcular_preco_em_doces(item_desejado, valor_item):
 			print(f"Erro no calculo de doces: {e}")
 			return False, "Erro ao calcular o preço em doces."
 
+def registrar_nota_fiscal(supermercado, valor_total, itens):
+	with trava_planilha:
+		try:
+			# 1. Tira o dinheiro do caixa da empresa automaticamente
+			aba_financas = planilha_db.worksheet("Financas_Empresa")
+			data_atual = datetime.now().strftime("%d/%m/%Y")
+			aba_financas.append_row([data_atual, "Saída", f"Insumos - {supermercado}", valor_total])
+			
+			# 2. Alimenta a inteligência de mercado
+			aba_precos = planilha_db.worksheet("Historico_Precos")
+			linhas_para_adicionar = []
+			
+			for item in itens:
+				nome = item.get("item", "")
+				qtd = item.get("quantidade", "")
+				preco = item.get("preco_unitario", 0)
+				linhas_para_adicionar.append([data_atual, supermercado, nome, str(qtd), preco])
+				
+			if linhas_para_adicionar:
+				# Salva todos os itens de uma vez só (Batch Update) para ficar muito rápido
+				aba_precos.append_rows(linhas_para_adicionar)
+				
+			time.sleep(1)
+			return True
+		except Exception as e:
+			print(f"Erro ao processar nota fiscal na planilha: {e}")
+			return False
+
 @app.route('/webhook', methods=['POST'])
 def receber_mensagem():
 	try:
@@ -1371,6 +1407,17 @@ def receber_mensagem():
 						resposta_para_whatsapp = msg
 					else:
 						resposta_para_whatsapp = "Chefe, não entendi o valor exato. Quanto custa isso que você quer comprar?"
+
+				elif acao == "processar_nota_fiscal":
+					mercado = dados_extraidos.get("supermercado", "Supermercado")
+					valor_nota = dados_extraidos.get("valor_total", 0)
+					itens_nota = dados_extraidos.get("itens_comprados", [])
+					
+					if valor_nota > 0:
+						sucesso = registrar_nota_fiscal(mercado, valor_nota, itens_nota)
+						resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Nota do {mercado} processada! Gasto anotado e preços salvos para comparação.") if sucesso else "Chefe, li a nota, mas a planilha falhou ao salvar o histórico."
+					else:
+						resposta_para_whatsapp = "Chefe, a foto ficou um pouco embaçada e não consegui ler o valor total ou não encontrei produtos válidos. Pode mandar a foto com mais foco?"
 
 				else:
 					resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", "Anotado!")
