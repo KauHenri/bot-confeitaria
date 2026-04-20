@@ -171,9 +171,21 @@ def conectar_planilha():
 
 planilha_db = conectar_planilha()
 trava_planilha = RLock()
+# --- SISTEMA DE CACHE DE PLANILHA (Aceleração) ---
+cache_planilha = {
+	"estoque": {"dados": "", "tempo": 0},
+	"saldos": {}
+}
+TEMPO_CACHE = 30 # A memória dura 30 segundos
 
-# --- NOVO SISTEMA DE ESTOQUE (Sem numerais) ---
 def obter_estoque_atual():
+	global cache_planilha
+	agora = time.time()
+	
+	# Se a informação tem menos de 30 segundos, pega direto da memória RAM (Instantâneo!)
+	if (agora - cache_planilha["estoque"]["tempo"]) < TEMPO_CACHE:
+		return cache_planilha["estoque"]["dados"]
+		
 	try:
 		aba_estoque = planilha_db.worksheet("Estoque")
 		registros = aba_estoque.get_all_records()
@@ -190,7 +202,6 @@ def obter_estoque_atual():
 			disponivel = str(item.get('Disponivel', '')).strip().lower()
 			
 			if disponivel in ['sim', '1', 'true', 'ok', 'tem']:
-				# --- CONVERSÃO BLINDADA DE PREÇO ---
 				try:
 					if isinstance(preco_bruto, (int, float)):
 						preco_num = float(preco_bruto)
@@ -207,9 +218,15 @@ def obter_estoque_atual():
 				tem_produto = True
 				
 		if not tem_produto:
-			return "Não temos nenhum produto pronto no momento."
+			resultado = "Não temos nenhum produto pronto no momento."
+		else:
+			resultado = texto_estoque
 			
-		return texto_estoque
+		# Salva a resposta no Cache para a próxima mensagem
+		cache_planilha["estoque"]["dados"] = resultado
+		cache_planilha["estoque"]["tempo"] = agora
+		return resultado
+		
 	except Exception as e:
 		print(f"Erro ao ler estoque: {e}")
 		return "Erro ao verificar o cardápio."
@@ -424,13 +441,26 @@ def atualizar_status_pagamento(nome_buscado):
 			return False, "Erro ao dar baixa no pagamento."
 
 def verificar_saldo_cliente(telefone):
+	global cache_planilha
+	agora = time.time()
+	
+	# Se já pesquisamos esse cliente nos últimos 30 segundos, retorna da RAM
+	if telefone in cache_planilha["saldos"] and (agora - cache_planilha["saldos"][telefone]["tempo"]) < TEMPO_CACHE:
+		return cache_planilha["saldos"][telefone]["dados"]
+		
 	try:
 		aba_clientes = planilha_db.worksheet("Clientes")
 		registros = aba_clientes.get_all_records()
+		saldo_encontrado = "R$ 0,00"
+		
 		for linha in registros:
 			if str(linha.get("Telefone", "")) == str(telefone):
-				return str(linha.get("Saldo_Devedor", "R$ 0,00"))
-		return "R$ 0,00"
+				saldo_encontrado = str(linha.get("Saldo_Devedor", "R$ 0,00"))
+				break
+				
+		# Guarda o saldo desse cliente específico no Cache
+		cache_planilha["saldos"][telefone] = {"dados": saldo_encontrado, "tempo": agora}
+		return saldo_encontrado
 	except Exception:
 		return "R$ 0,00"
 
@@ -1338,7 +1368,7 @@ def receber_mensagem():
 						resposta_para_whatsapp = msg
 					else:
 						resposta_para_whatsapp = "Chefe, não entendi o valor exato. Quanto custa isso que você quer comprar?"
-						
+
 				else:
 					resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", "Anotado!")
 					
