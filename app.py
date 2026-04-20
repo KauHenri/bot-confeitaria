@@ -812,13 +812,13 @@ def gerar_relatorio_financeiro(mes_ano=None):
 			if lucro_liquido > 0:
 				relatorio += f"💰 *LUCRO LÍQUIDO:* R$ {lucro_liquido:.2f} 🥳\n\n".replace('.', ',')
 				
-				# --- REGRA DOS POTES (60/40) ---
-				caixa_empresa = lucro_liquido * 0.60
-				pro_labore = lucro_liquido * 0.40
+				# --- REGRA DOS POTES (10/90) ---
+				caixa_empresa = lucro_liquido * 0.10
+				pro_labore = lucro_liquido * 0.90
 				
-				relatorio += "🍯 *DIVISÃO DO LUCRO (Regra 60/40):*\n"
-				relatorio += f"🏢 *Caixa da Empresa (60%):* R$ {caixa_empresa:.2f} (Para repor estoque e crescer)\n".replace('.', ',')
-				relatorio += f"👩‍🍳 *Seu Pró-Labore (40%):* R$ {pro_labore:.2f} (Seu salário livre!)\n\n".replace('.', ',')
+				relatorio += "🍯 *DIVISÃO DO LUCRO (Regra 10/90):*\n"
+				relatorio += f"🏢 *Caixa da Empresa (10%):* R$ {caixa_empresa:.2f} (Para repor estoque e crescer)\n".replace('.', ',')
+				relatorio += f"👩‍🍳 *Seu Pró-Labore (90%):* R$ {pro_labore:.2f} (Seu salário livre!)\n\n".replace('.', ',')
 			else:
 				relatorio += f"⚠️ *PREJUÍZO/EMPATE:* R$ {lucro_liquido:.2f} 🛑\n".replace('.', ',')
 				relatorio += "🍯 *DIVISÃO DO LUCRO:* Sem lucro livre para divisão neste mês ainda.\n\n"
