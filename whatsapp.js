@@ -191,6 +191,21 @@ async function enviarCardapioAutomatico(targetJID) {
 	}
 }
 
+// --- FUNÇÃO PARA PEGAR O BRIEFING DA AGENDA NO PYTHON ---
+async function enviarBriefingMatinal(targetJID) {
+	try {
+		// O Node chama a rota que criamos no app.py
+		const response = await axios.get('http://localhost:5000/briefing_matinal');
+		if (response.data.mensagem) {
+			await client.sendMessage(targetJID, response.data.mensagem);
+			console.log(`☀️ Briefing matinal enviado com sucesso para: ${targetJID}`);
+		}
+	} catch (error) {
+		console.error('❌ Erro ao buscar briefing matinal no Python:', error.message);
+	}
+}
+
+
 // --- CONFIGURAÇÃO DOS HORÁRIOS (CRON) ---
 
 // Segundas e Quartas às 08:00 (Superintendência)
@@ -207,11 +222,65 @@ cron.schedule('0 10 * * 2,4,5', () => {
 	enviarCardapioAutomatico(ID_GRUPO_APAE);
 });
 
-// === CÓDIGO DE TESTE: Roda a cada 1 minuto ===
+// Briefing Matinal - Todo dia às 07:00 da manhã
+// Lógica: minuto(0) hora(7) dia(*) mes(*) dia_semana(*)
+cron.schedule('0 7 * * *', () => {
+	console.log('⏰ Hora do lembrete matinal! Consultando a agenda da chefe...');
+	
+	enviarBriefingMatinal(ID_GRUPO_ADMIN); 
+});
+
+// // === CÓDIGO DE TESTE: Roda a cada 1 minuto ===
 // cron.schedule('* * * * *', () => {
 // 	console.log('⏰ [TESTE RÁPIDO] O relógio virou! Enviando cardápio...');
 // 	// Coloque o ID do grupo da APAE ou Superintendência que você descobriu
-// 	enviarCardapioAutomatico('COLOQUE_O_ID_DO_GRUPO_AQUI@g.us'); 
+// 	enviarCardapioAutomatico(ID_GRUPO_SUPERINTENDENCIA); 
 // });
+
+// // TESTE: Enviar briefing agora (ajuste os minutos conforme o horário atual)
+// cron.schedule('* * * * *', () => { 
+// 	console.log('⏰ [TESTE] Rodando briefing matinal agora...');
+// 	enviarBriefingMatinal(ID_GRUPO_ADMIN);
+// });
+
+// --- 16:30: CONFERÊNCIA DE SOBRAS ---
+cron.schedule('30 16 * * *', async () => {
+	console.log('⏰ Hora de conferir as sobras com a chefe...');
+	try {
+		const response = await axios.get('http://localhost:5000/conferir_final_rota');
+		if (response.data.mensagem) {
+			await client.sendMessage(ID_GRUPO_ADMIN, response.data.mensagem);
+		}
+	} catch (error) {
+		console.error('Erro no cron das 16:30:', error.message);
+	}
+});
+
+// --- 18:00: GATILHO DE SEGURANÇA (LIMPEZA TOTAL) ---
+cron.schedule('0 18 * * *', async () => {
+	console.log('🚨 Executando limpeza automática de segurança...');
+	try {
+		const response = await axios.post('http://localhost:5000/gatilho_seguranca_18h');
+		if (response.data.mensagem) {
+			await client.sendMessage(ID_GRUPO_ADMIN, response.data.mensagem);
+		}
+	} catch (error) {
+		console.error('Erro no gatilho das 18h:', error.message);
+	}
+});
+
+// --- 09:00: RADAR DE CONTAS (VENCIMENTOS EM 48H) ---
+// Lógica: minuto(0) hora(9) dia(*) mes(*) dia_semana(*)
+cron.schedule('0 9 * * *', async () => {
+	console.log('⏰ A executar o Radar de Contas (Aviso de 48h)...');
+	try {
+		const response = await axios.get('http://localhost:5000/radar_vencimentos');
+		if (response.data.mensagem) {
+			await client.sendMessage(ID_GRUPO_ADMIN, response.data.mensagem);
+		}
+	} catch (error) {
+		console.error('Erro no cron do radar de contas:', error.message);
+	}
+});
 
 client.initialize();
