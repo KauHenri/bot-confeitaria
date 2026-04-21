@@ -566,7 +566,7 @@ def gerar_extrato_fiado(busca, por_telefone=False):
 			if por_telefone:
 				extrato = "🧾 *SEU EXTRATO DE COMPRAS*\n\n"
 			else:
-				extrato = f"🧾 *EXTRATO - {nome_cliente_real}*\n\n"
+				extrato = f"🧾 *EXTRATO DE COMPRAS*\n\n"
 			tem_pedidos = False
 			aba_vendas = planilha_db.worksheet("Vendas")
 			dados_vendas = aba_vendas.get_all_values()

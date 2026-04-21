@@ -70,6 +70,23 @@ client.on('ready', async () => {
 	// }
 });
 
+// --- SISTEMA DE AUTO-CURA (RECONEXÃO PM2) ---
+client.on('disconnected', (reason) => {
+	console.log('❌ O WhatsApp Web foi desconectado pelo celular ou pela Meta!');
+	console.log('Motivo da queda:', reason);
+	console.log('🔄 Forçando encerramento para o PM2 reiniciar o sistema...');
+	
+	// O código 1 diz ao Linux que o programa falhou.
+	// O PM2 vai ver isso e reiniciar o whatsapp.js automaticamente em 1 segundo.
+	process.exit(1); 
+});
+
+// Tratamento de erros do Puppeteer (Evita que o Chrome congele de madrugada)
+client.on('auth_failure', msg => {
+	console.error('❌ Falha na autenticação (Sessão inválida):', msg);
+	process.exit(1);
+});
+
 client.on('message', async msg => {
 	if (msg.from === 'status@broadcast') return;
 
