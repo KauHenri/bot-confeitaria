@@ -206,12 +206,17 @@ const ID_GRUPO_ADMIN = process.env.ID_GRUPO_ADMIN;
 // --- FUNÇÃO PARA PEGAR O CARDÁPIO DO PYTHON ---
 async function enviarCardapioAutomatico(targetJID) {
 	try {
-		// O Node "pergunta" pro Python o que tem no estoque
 		const response = await axios.get('http://localhost:5000/estoque_automatico');
-		if (response.data.cardapio) {
-			await client.sendMessage(targetJID, response.data.cardapio);
-			console.log(`🚀 Cardápio enviado com sucesso para: ${targetJID}`);
+		const cardapio = response.data.cardapio;
+		
+		// TRAVA DE SEGURANÇA: Se o texto contiver a palavra "vazio" ou "Não temos", ele aborta!
+		if (cardapio.includes("vazio") || cardapio.includes("Não temos nenhum produto")) {
+			console.log(`⚠️ Cardápio zerado! A chefe não fez nada hoje. Abortando envio para ${targetJID}.`);
+			return; // Sai da função e não manda nada no WhatsApp
 		}
+		
+		await client.sendMessage(targetJID, cardapio);
+		console.log(`🚀 Cardápio enviado com sucesso para: ${targetJID}`);
 	} catch (error) {
 		console.error('❌ Erro ao buscar cardápio para envio automático:', error.message);
 	}
@@ -315,6 +320,16 @@ cron.schedule('50 6 * * *', () => {
 	console.log('🔄 [ANTI-ZUMBI] Executando reinício diário preventivo da conexão...');
 	// O código 1 avisa o PM2 que o processo fechou. O PM2 reabre ele novinho em 1 segundo.
 	process.exit(1);
+});
+
+// --- ABRIR A LOJA AUTOMATICAMENTE ÀS 08:00 ---
+cron.schedule('0 8 * * *', async () => {
+	console.log('⏰ Abrindo a confeitaria automaticamente...');
+	try {
+		await axios.post('http://localhost:5000/abrir_loja_automatico');
+	} catch (error) {
+		console.error('Erro no cron de abertura:', error.message);
+	}
 });
 
 client.initialize();

@@ -112,7 +112,7 @@ modelo_admin = genai.GenerativeModel(
 	8. "registrar_venda_manual": Chefe ditou uma venda.
 	9. "cancelar_venda_cliente": Chefe pediu para cancelar venda.
 	10. "listar_devedores": Para quando a chefe perguntar "quem tá me devendo?", "lista de fiado", ou pedir o nome dos devedores.
-	11. "alterar_status_loja": Para mudar o funcionamento. Se a chefe disser "estou saindo pra entrega", "fui pra rua", retorne "novo_status": "EM_ROTA". Se disser "voltei", "to na loja", "abriu", retorne "novo_status": "ABERTO". Se disser "fechou", retorne "novo_status": "FECHADO".
+	11. "alterar_status_loja": Para mudar o funcionamento. Se a chefe disser "estou saindo pra entrega", retorne "novo_status": "EM_ROTA". Se disser "voltei", "tô na loja" ou "abriu", retorne "novo_status": "ABERTO". Se disser "fechou", "hoje não vou fazer nada", "vou tirar folga hoje", "não vou trabalhar" ou "encerrado", retorne "novo_status": "FECHADO".
 	12. "gerar_dre_mensal": Use OBRIGATORIAMENTE quando a chefe pedir "fechamento do mês", "quanto vendemos esse mês", "resumo mensal", "lucro" ou "balanço". Extraia o campo "mes_referencia" no formato "MM/AAAA". Use a data de hoje para calcular meses passados (ex: se hoje é abril e ela pede "mês passado", envie "03/2026"). Se ela não especificar, envie o mês atual.
 	13. "remover_evento_agenda": Use quando a chefe pedir para apagar, deletar, remover ou desmarcar um compromisso na agenda (ex: "apaga o lembrete da internet", "desmarca o médico dia 20"). Extraia o "titulo" e a "data_vencimento".
 	14. "agendar_compromisso": Use para remédios, consultas ou visitas. Extraia uma lista chamada "eventos" contendo objetos com: "titulo", "data_vencimento" (DD/MM/AAAA) e "hora_inicio" (HH:MM). Se for um remédio de 8 em 8 horas, calcule e gere TODOS os horários individuais até a data final mencionada.
@@ -543,33 +543,46 @@ def gerar_extrato_fiado(busca, por_telefone=False):
 			aba_clientes = planilha_db.worksheet("Clientes")
 			registros = aba_clientes.get_all_records()
 			saldo_total = "R$ 0,00"
+			total_pago = "R$ 0,00"
+			total_comprado = "R$ 0,00"
 			nome_cliente_real = busca
 			telefone_real = busca if por_telefone else ""
 			cliente_encontrado = False
+			
 			for cli in registros:
 				nome_planilha = str(cli.get("Nome", ""))
 				tel_planilha = str(cli.get("Telefone", ""))
 				if (por_telefone and tel_planilha == str(busca)) or (not por_telefone and str(busca).lower() in nome_planilha.lower()):
 					saldo_total = str(cli.get("Saldo_Devedor", "R$ 0,00"))
+					total_pago = str(cli.get("Total_Pago", "R$ 0,00"))
+					total_comprado = str(cli.get("Total_Comprado", "R$ 0,00"))
 					nome_cliente_real = nome_planilha
 					telefone_real = tel_planilha
 					cliente_encontrado = True
 					break
+					
 			if not cliente_encontrado:
 				return False, "Registro não encontrado."
+				
 			try:
 				valor_saldo = float(saldo_total.replace("R$", "").replace(".", "").replace(",", ".").strip())
 				if valor_saldo <= 0.01:
-					return True, f"A conta de {nome_cliente_real} está zerada! ✅"
+					return True, f"A sua conta está zerada! ✅" if por_telefone else f"A conta de {nome_cliente_real} está zerada! ✅"
 			except ValueError:
 				pass
+				
+			# Proteção de privacidade
 			if por_telefone:
 				extrato = "🧾 *SEU EXTRATO DE COMPRAS*\n\n"
 			else:
-				extrato = f"🧾 *EXTRATO DE COMPRAS*\n\n"
+				extrato = f"🧾 *EXTRATO - {nome_cliente_real}*\n\n"
+				
 			tem_pedidos = False
 			aba_vendas = planilha_db.worksheet("Vendas")
 			dados_vendas = aba_vendas.get_all_values()
+			
+			ultimas_compras = []
+			
 			for linha in reversed(dados_vendas[1:]):
 				if len(linha) >= 7:
 					if "Pendente" in str(linha[6]) and str(linha[1]) == telefone_real:
@@ -579,8 +592,17 @@ def gerar_extrato_fiado(busca, por_telefone=False):
 								lista = [f"{item.get('quantidade', '')} {item.get('item', '')}" for item in json.loads(linha[7])]
 								if lista: pedido_limpo = ", ".join(lista)
 							except: pass
-						extrato += f"▫️ {linha[0].split(' ')[0]}: {pedido_limpo} -> {linha[4]}\n"
-						tem_pedidos = True
+						ultimas_compras.append(f"▫️ {linha[0].split(' ')[0]}: {pedido_limpo} -> {linha[4]}")
+						
+			if ultimas_compras:
+				tem_pedidos = True
+				extrato += "*Últimas movimentações pendentes:*\n"
+				# Mostra apenas as 10 últimas para não poluir a tela
+				for compra in ultimas_compras[:10]:
+					extrato += compra + "\n"
+				if len(ultimas_compras) > 10:
+					extrato += f"▫️ ... e mais {len(ultimas_compras) - 10} compras antigas.\n"
+					
 			try:
 				aba_encomendas = planilha_db.worksheet("Encomendas")
 				dados_enc = aba_encomendas.get_all_values()
@@ -591,8 +613,13 @@ def gerar_extrato_fiado(busca, por_telefone=False):
 						tem_pedidos = True
 				if texto_enc: extrato += "\n*Encomendas inclusas:*\n" + texto_enc
 			except: pass
-			if not tem_pedidos: extrato += "\n▫️ Obs: O saldo não está zerado, mas os itens podem ter sido parcialmente pagos.\n"
-			extrato += f"\n💰 *SALDO DEVEDOR:* {saldo_total}"
+			
+			# --- NOVO BLOCO DE RESUMO ---
+			extrato += "\n📊 *RESUMO DA CONTA:*\n"
+			extrato += f"🛒 Total Comprado (Histórico): {total_comprado}\n"
+			extrato += f"✅ Valor Abatido/Pago: {total_pago}\n"
+			extrato += f"💰 *SALDO DEVEDOR ATUAL:* {saldo_total}"
+			
 			return True, extrato
 		except Exception as e:
 			return False, "Erro ao puxar extrato."
@@ -1440,7 +1467,7 @@ def receber_mensagem():
 				status_loja = "EM_ROTA (A chefe está na rua fazendo entregas)"
 				aviso_rota = "\n⚠️ ATENÇÃO: A CHEFE ESTÁ NA RUA. VOCÊ DEVE AVISAR ISSO AO CLIENTE OBRIGATORIAMENTE."
 			elif status_manual == "FECHADO" or not verificar_loja_aberta():
-				status_loja = f"FECHADO (Nosso horário normal é das {HORA_ABRE}h às {HORA_FECHA}h)"
+				status_loja = f"FECHADO (A confeitaria não está recebendo pedidos no momento)"
 			else:
 				status_loja = "ABERTO"
 			
@@ -1651,9 +1678,15 @@ def briefing_matinal():
 
 @app.route('/estoque_automatico', methods=['GET'])
 def estoque_automatico():
-	"""Rota simples para o Node.js buscar o texto do cardápio pronto."""
+	"""Rota para o Node.js buscar o texto do cardápio."""
 	cardapio = obter_estoque_atual()
-	msg_completa = f"🌟 *CARDÁPIO DE HOJE* 🌟\n\n{cardapio}\nFicou com vontade? É só me pedir por aqui! 😋"
+	
+	# Se estiver zerado, manda o texto puro para o Node barrar o envio
+	if "vazio" in cardapio or "Não temos nenhum produto" in cardapio:
+		return jsonify({"cardapio": cardapio}), 200
+		
+	# Se tiver produtos, monta a mensagem de Bom Dia!
+	msg_completa = f"☀️ *Bom dia, pessoal!* ☀️\n\n🌟 *CARDÁPIO DE HOJE* 🌟\n\n{cardapio}\nFicou com vontade? É só me pedir por aqui! 😋"
 	return jsonify({"cardapio": msg_completa}), 200
 
 @app.route('/conferir_final_rota', methods=['GET'])
@@ -1720,6 +1753,11 @@ def radar_vencimentos():
 		return jsonify({"mensagem": msg})
 	except Exception as e:
 		return jsonify({"erro": str(e)}), 500
+
+@app.route('/abrir_loja_automatico', methods=['POST'])
+def abrir_loja_automatico():
+	salvar_status_loja("ABERTO")
+	return jsonify({"mensagem": "Loja aberta com sucesso"}), 200
 
 if __name__ == '__main__':
 	print("Servidor rodando...")
