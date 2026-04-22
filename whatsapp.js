@@ -129,14 +129,23 @@ client.on('message', async msg => {
 
 	if (msg.hasMedia) {
 		try {
-			const media = await msg.downloadMedia();
+			console.log("⏳ Tentando baixar mídia do cliente...");
+			
+			// Criamos um cronômetro de 15 segundos. Se estourar, ele gera um erro forçado.
+			const timeoutPromise = new Promise((_, reject) => {
+				setTimeout(() => reject(new Error('Timeout de Download')), 15000);
+			});
+			
+			// A função Promise.race faz o download e o cronômetro apostarem corrida. O que terminar primeiro, ganha.
+			const media = await Promise.race([msg.downloadMedia(), timeoutPromise]);
+			
 			if (media) {
-				mediaData = media.data; // O arquivo em formato base64
-				mediaMime = media.mimetype; // O tipo (ex: audio/ogg ou image/jpeg)
-				console.log(`📎 Mídia recebida: ${mediaMime}`);
+				mediaData = media.data;
+				mediaMime = media.mimetype;
+				console.log(`📎 Mídia recebida com sucesso: ${mediaMime}`);
 			}
 		} catch (e) {
-			console.log("❌ Erro ao baixar mídia:", e);
+			console.log(`❌ Erro ao baixar mídia (ou demorou mais de 15s): ${e.message}. Ignorando anexo!`);
 		}
 	}
 
