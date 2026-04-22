@@ -300,4 +300,12 @@ cron.schedule('0 9 * * *', async () => {
 	}
 });
 
+// --- SISTEMA ANTI-ZUMBI (REINÍCIO DIÁRIO PREVENTIVO) ---
+// Todo dia às 06:50 da manhã, força o robô a reiniciar para limpar o cache da madrugada
+cron.schedule('50 6 * * *', () => {
+	console.log('🔄 [ANTI-ZUMBI] Executando reinício diário preventivo da conexão...');
+	// O código 1 avisa o PM2 que o processo fechou. O PM2 reabre ele novinho em 1 segundo.
+	process.exit(1);
+});
+
 client.initialize();
