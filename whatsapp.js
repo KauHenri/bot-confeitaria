@@ -314,12 +314,21 @@ cron.schedule('0 9 * * *', async () => {
 	}
 });
 
-// --- SISTEMA ANTI-ZUMBI (REINÍCIO DIÁRIO PREVENTIVO) ---
-// Todo dia às 06:50 da manhã, força o robô a reiniciar para limpar o cache da madrugada
-cron.schedule('50 6 * * *', () => {
-	console.log('🔄 [ANTI-ZUMBI] Executando reinício diário preventivo da conexão...');
-	// O código 1 avisa o PM2 que o processo fechou. O PM2 reabre ele novinho em 1 segundo.
-	process.exit(1);
+// --- WATCHDOG: MONITORAMENTO ATIVO DE CONEXÃO ---
+// Roda a cada 15 minutos para garantir que o celular não dormiu
+cron.schedule('*/15 * * * *', async () => {
+	try {
+		const state = await client.getState();
+		console.log(`[WATCHDOG] Status da conexão: ${state}`);
+		
+		if (state !== 'CONNECTED') {
+			console.log('⚠️ [WATCHDOG] Estado Zumbi detectado! Forçando reinício curativo...');
+			process.exit(1); // O PM2 assume e reinicia instantaneamente
+		}
+	} catch (error) {
+		console.error('❌ [WATCHDOG] Falha fatal ao ler o status. O Puppeteer travou. Matando processo...');
+		process.exit(1);
+	}
 });
 
 // --- ABRIR A LOJA AUTOMATICAMENTE ÀS 08:00 ---
