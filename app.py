@@ -123,8 +123,9 @@ modelo_admin = genai.GenerativeModel(
 	
 	Regras para "processar_nota_fiscal":
 	- Extraia o "supermercado" (nome do local).
-	- OBRIGATÓRIO: Analise item por item. Ingredientes e embalagens vão para "itens_empresa". Itens de higiene, carnes, petiscos e uso doméstico vão para "itens_pessoais".
-	- REGRA DE EXCEÇÃO (A PALAVRA DA CHEFE): Se a chefe enviar um texto ou áudio junto com a foto dando instruções (ex: "o leite dessa nota é pra casa", "metade do valor da farinha é pessoal"), a ordem dela é ABSOLUTA e anula a separação automática. Divida os valores exatamente como ela mandar.
+	- OBRIGATÓRIO: Analise item por item. Ingredientes e embalagens vão para a lista "itens_empresa". Itens de higiene, carnes, petiscos e uso doméstico vão para "itens_pessoais".
+	- FORMATO DOS ITENS: Cada item dentro de "itens_empresa" DEVE ESTRITAMENTE ser um objeto com as chaves: "item" (nome do produto), "quantidade" (texto, ex: "1kg", "2 un") e "preco_unitario" (apenas números). Exemplo exato: [{"item": "Mandioca", "quantidade": "0.745kg", "preco_unitario": 2.99}].
+	- REGRA DE EXCEÇÃO (A PALAVRA DA CHEFE): Se a chefe enviar um texto ou áudio junto com a foto dando instruções (ex: "o leite dessa nota é pra casa"), a ordem dela é ABSOLUTA. Divida os valores exatamente como ela mandar.
 	- Calcule "valor_empresa" e "valor_pessoal" (apenas números).
 	- Na "resposta_amigavel", liste como você dividiu a conta de forma clara.
 
@@ -1083,14 +1084,16 @@ def registrar_nota_fiscal(supermercado, valor_empresa, valor_pessoal, itens_empr
 				linhas_para_adicionar = []
 				
 				for item in itens_empresa:
-					nome = item.get("item", "")
-					qtd = item.get("quantidade", "")
-					preco = item.get("preco_unitario", 0)
-					if nome and preco > 0: # Evita salvar linhas vazias se a nota estiver ruim
-						linhas_para_adicionar.append([data_atual, supermercado, nome, str(qtd), preco])
+					# ESCUDO: Verifica se a IA mandou um objeto estruturado e não apenas uma palavra solta
+					if isinstance(item, dict):
+						nome = item.get("item", "")
+						qtd = item.get("quantidade", "")
+						preco = item.get("preco_unitario", 0)
+						
+						if nome and preco > 0: # Evita salvar linhas vazias
+							linhas_para_adicionar.append([data_atual, supermercado, nome, str(qtd), preco])
 					
 				if linhas_para_adicionar:
-					# Salva tudo de uma vez para ficar rápido
 					aba_precos.append_rows(linhas_para_adicionar)
 					
 			time.sleep(1)
@@ -1460,7 +1463,7 @@ def receber_mensagem():
 						resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Nota processada! Gastos divididos e salvos na planilha.") if sucesso else "Chefe, li a nota, mas a planilha falhou ao salvar o histórico."
 					else:
 						resposta_para_whatsapp = "Chefe, a foto ficou um pouco embaçada e não consegui ler os valores de forma segura. Pode tentar mandar com mais foco?"
-						
+
 				else:
 					resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", "Anotado!")
 					
