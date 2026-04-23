@@ -61,7 +61,7 @@ ID_GRUPO_ADMIN = os.getenv("ID_GRUPO_ADMIN")
 
 HORA_ABRE = 8
 HORA_FECHA = 18
-MODO_CORUJA_TESTE = False
+MODO_CORUJA_TESTE = True
 
 def verificar_loja_aberta():
 	if MODO_CORUJA_TESTE:
@@ -144,6 +144,8 @@ modelo_admin = genai.GenerativeModel(
 	Regras para "atualizar_estoque":
 	- Retorne uma chave "itens_estoque" contendo uma lista.
 	- Cada item deve ter: "item" (nome), "disponivel" (booleano: true se ela disse que tem/fez, false se ela disse que acabou/não tem hoje) e "preco" (se ela informar, senão 0).
+	- REGRA DE ATUALIZAÇÃO: Envie no JSON APENAS os itens que a chefe citou. Se ela disser "Acabou a rosca", envie APENAS a rosca com "disponivel": false. 
+	- REGRA DE OURO DO "ACABOU TUDO": Use a varredura completa para listar todos como 'false' EXCLUSIVAMENTE se a chefe disser de forma global "vendeu tudo hoje", "zerou o estoque inteiro", "acabou o cardápio". CUIDADO com pegadinhas: se ela disser "vendeu tudo das roscas" ou "zerou as roscas", a palavra 'tudo' se refere APENAS à rosca, então atualize SÓ a rosca.
 	- REGRA DE OURO DO ESTOQUE: A planilha só atualiza o que você enviar. Se a chefe usar palavras restritivas como "Hoje SÓ tem X", "Acabou tudo, só restou Y", você DEVE OBRIGATORIAMENTE varrer o ESTOQUE ATUAL e listar X como true, e listar explicitamente TODOS os outros produtos como false no JSON. Se você não os enviar como false, eles continuarão à venda indevidamente.
 	- REGRA CONTRA ITENS FANTASMAS: NUNCA crie itens genéricos como "tudo", "todos", "os bolos", "os doces". Se a chefe usar palavras generalistas (ex: "hoje tem tudo", "todos os bolos estão disponíveis"), você DEVE olhar a lista de ESTOQUE ATUAL fornecida e retornar CADA item real e individual daquela categoria com "disponivel": true. O nome do item no JSON deve bater exatamente com o nome dos produtos já existentes na planilha.
 
@@ -1057,32 +1059,44 @@ def calcular_preco_em_doces(item_desejado, valor_item):
 			print(f"Erro no calculo de doces: {e}")
 			return False, "Erro ao calcular o preço em doces."
 
-def registrar_nota_fiscal(supermercado, valor_total, itens):
+def registrar_nota_fiscal(supermercado, valor_empresa, valor_pessoal, itens_empresa):
 	with trava_planilha:
 		try:
-			# 1. Tira o dinheiro do caixa da empresa automaticamente
-			aba_financas = planilha_db.worksheet("Financas_Empresa")
 			data_atual = datetime.now().strftime("%d/%m/%Y")
-			aba_financas.append_row([data_atual, "Saída", f"Insumos - {supermercado}", valor_total])
 			
-			# 2. Alimenta a inteligência de mercado
-			aba_precos = planilha_db.worksheet("Historico_Precos")
-			linhas_para_adicionar = []
+			# 1. Salva gasto da empresa
+			if valor_empresa > 0:
+				aba_financas = planilha_db.worksheet("Financas_Empresa")
+				aba_financas.append_row([data_atual, "Saída", f"Insumos - {supermercado}", valor_empresa])
+				
+			# 2. Salva gasto pessoal (O Python vai criar a linha na aba Financas_Pessoal)
+			if valor_pessoal > 0:
+				try:
+					aba_pessoal = planilha_db.worksheet("Financas_Pessoal")
+					aba_pessoal.append_row([data_atual, "Saída", f"Supermercado - {supermercado}", valor_pessoal])
+				except Exception as e:
+					print(f"⚠️ Aba 'Financas_Pessoal' não encontrada: {e}")
 			
-			for item in itens:
-				nome = item.get("item", "")
-				qtd = item.get("quantidade", "")
-				preco = item.get("preco_unitario", 0)
-				linhas_para_adicionar.append([data_atual, supermercado, nome, str(qtd), preco])
+			# 3. Alimenta a inteligência de mercado apenas com itens da empresa
+			if itens_empresa:
+				aba_precos = planilha_db.worksheet("Historico_Precos")
+				linhas_para_adicionar = []
 				
-			if linhas_para_adicionar:
-				# Salva todos os itens de uma vez só (Batch Update) para ficar muito rápido
-				aba_precos.append_rows(linhas_para_adicionar)
-				
+				for item in itens_empresa:
+					nome = item.get("item", "")
+					qtd = item.get("quantidade", "")
+					preco = item.get("preco_unitario", 0)
+					if nome and preco > 0: # Evita salvar linhas vazias se a nota estiver ruim
+						linhas_para_adicionar.append([data_atual, supermercado, nome, str(qtd), preco])
+					
+				if linhas_para_adicionar:
+					# Salva tudo de uma vez para ficar rápido
+					aba_precos.append_rows(linhas_para_adicionar)
+					
 			time.sleep(1)
 			return True
 		except Exception as e:
-			print(f"Erro ao processar nota fiscal na planilha: {e}")
+			print(f"❌ Erro ao processar nota fiscal na planilha: {e}")
 			return False
 
 @app.route('/webhook', methods=['POST'])
@@ -1437,15 +1451,16 @@ def receber_mensagem():
 
 				elif acao == "processar_nota_fiscal":
 					mercado = dados_extraidos.get("supermercado", "Supermercado")
-					valor_nota = dados_extraidos.get("valor_total", 0)
-					itens_nota = dados_extraidos.get("itens_comprados", [])
+					valor_empresa = float(dados_extraidos.get("valor_empresa", 0))
+					valor_pessoal = float(dados_extraidos.get("valor_pessoal", 0))
+					itens_empresa = dados_extraidos.get("itens_empresa", [])
 					
-					if valor_nota > 0:
-						sucesso = registrar_nota_fiscal(mercado, valor_nota, itens_nota)
-						resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Nota do {mercado} processada! Gasto anotado e preços salvos para comparação.") if sucesso else "Chefe, li a nota, mas a planilha falhou ao salvar o histórico."
+					if (valor_empresa + valor_pessoal) > 0:
+						sucesso = registrar_nota_fiscal(mercado, valor_empresa, valor_pessoal, itens_empresa)
+						resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Nota processada! Gastos divididos e salvos na planilha.") if sucesso else "Chefe, li a nota, mas a planilha falhou ao salvar o histórico."
 					else:
-						resposta_para_whatsapp = "Chefe, a foto ficou um pouco embaçada e não consegui ler o valor total ou não encontrei produtos válidos. Pode mandar a foto com mais foco?"
-
+						resposta_para_whatsapp = "Chefe, a foto ficou um pouco embaçada e não consegui ler os valores de forma segura. Pode tentar mandar com mais foco?"
+						
 				else:
 					resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", "Anotado!")
 					
