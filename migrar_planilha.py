@@ -10,10 +10,18 @@ load_dotenv()
 PLANILHA_ID = os.getenv("PLANILHA_ID")
 
 def conectar_planilha():
-    escopos = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    credenciais = ServiceAccountCredentials.from_json_keyfile_name('credenciais.json', escopos)
+    escopos = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    
+    if creds_json:
+        import json
+        creds_dict = json.loads(creds_json)
+        credenciais = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, escopos)
+    else:
+        credenciais = ServiceAccountCredentials.from_json_keyfile_name('credenciais.json', escopos)
+        
     cliente = gspread.authorize(credenciais)
-    return cliente.open_by_key(PLANILHA_ID)
+    return cliente.open_by_key(os.getenv("PLANILHA_ID"))
 
 def limpar_valor(valor_str):
     if isinstance(valor_str, (int, float)):
