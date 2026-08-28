@@ -434,9 +434,9 @@ def webhook(subpath=None):
 		import threading
 		def background_task(dados_completos, dados, key):
 			try:
-					chat_id = key.get('remoteJid', '')
+				chat_id = key.get('remoteJid', '')
 				if chat_id == 'status@broadcast':
-					return jsonify({"status": "ignorado_status"}), 200
+					return
 					
 				numero = key.get('participant', chat_id)
 				
@@ -456,7 +456,7 @@ def webhook(subpath=None):
 				if NUMERO_TESTE and NUMERO_TESTE != "000" and numero not in NUMERO_TESTE:
 					if chat_id != ID_GRUPO_ADMIN:
 						print(f"🔒 [DEBUG] Bloqueado! O número recebido não bate com o NUMERO_TESTE: '{NUMERO_TESTE}'")
-						return jsonify({"status": "ignorado"}), 200
+						return
 				
 				nome_enviado = dados.get('pushName')
 				nome_cliente = nome_enviado if nome_enviado else numero.split('@')[0]
