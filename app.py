@@ -4,7 +4,7 @@ import json
 import os
 import time
 from threading import RLock
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template, send_from_directory
 import google.generativeai as genai
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
@@ -1286,6 +1286,134 @@ def iniciar_agendador():
 
 # Inicia agendador automaticamente
 iniciar_agendador()
+
+# =========================================================================
+# 📱 ROTAS DO PAINEL WEB MOBILE (PWA PARA A CHEFE)
+# =========================================================================
+
+@app.route('/painel', methods=['GET'])
+@app.route('/painel/', methods=['GET'])
+def render_painel():
+    return render_template('painel.html')
+
+@app.route('/manifest.json', methods=['GET'])
+def manifest():
+    return send_from_directory('static', 'manifest.json')
+
+@app.route('/api/painel/stats', methods=['GET'])
+def api_painel_stats():
+    try:
+        dados = database.obter_resumo_painel_db()
+        return jsonify(dados), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/painel/estoque', methods=['GET'])
+def api_painel_estoque():
+    try:
+        itens = database.listar_estoque_painel_db()
+        return jsonify(itens), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/painel/estoque/toggle', methods=['POST'])
+def api_painel_estoque_toggle():
+    try:
+        req = request.json or {}
+        item_id = req.get('id')
+        disponivel = req.get('disponivel', False)
+        database.toggle_produto_painel_db(item_id, disponivel)
+        return jsonify({"status": "sucesso"}), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/painel/estoque/salvar', methods=['POST'])
+def api_painel_estoque_salvar():
+    try:
+        req = request.json or {}
+        item_id = req.get('id')
+        nome = req.get('item', '').strip()
+        preco = float(req.get('preco', 0.0))
+        disponivel = req.get('disponivel', True)
+        database.salvar_produto_painel_db(nome, preco, disponivel, item_id)
+        return jsonify({"status": "sucesso"}), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/painel/estoque/deletar', methods=['POST'])
+def api_painel_estoque_deletar():
+    try:
+        req = request.json or {}
+        item_id = req.get('id')
+        database.deletar_produto_painel_db(item_id)
+        return jsonify({"status": "sucesso"}), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/painel/estoque/zerar', methods=['POST'])
+def api_painel_estoque_zerar():
+    try:
+        database.zerar_estoque_completo_db()
+        return jsonify({"status": "sucesso"}), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/painel/vendas', methods=['GET'])
+def api_painel_vendas():
+    try:
+        vendas = database.listar_vendas_painel_db()
+        return jsonify(vendas), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/painel/clientes', methods=['GET'])
+def api_painel_clientes():
+    try:
+        clientes = database.listar_clientes_painel_db()
+        return jsonify(clientes), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/painel/clientes/baixa', methods=['POST'])
+def api_painel_clientes_baixa():
+    try:
+        req = request.json or {}
+        telefone = req.get('telefone')
+        valor = float(req.get('valor', 0.0))
+        sucesso, msg = database.registrar_baixa_painel_db(telefone, valor)
+        return jsonify({"status": "sucesso" if sucesso else "erro", "mensagem": msg}), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/painel/tarefas', methods=['GET'])
+def api_painel_tarefas():
+    try:
+        tarefas = database.listar_tarefas_painel_db()
+        return jsonify(tarefas), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/painel/tarefas/salvar', methods=['POST'])
+def api_painel_tarefas_salvar():
+    try:
+        req = request.json or {}
+        tarefa = req.get('tarefa', '').strip()
+        data_tarefa = req.get('data', '').strip()
+        database.salvar_tarefa_painel_db(tarefa, data_tarefa)
+        return jsonify({"status": "sucesso"}), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/painel/tarefas/toggle', methods=['POST'])
+def api_painel_tarefas_toggle():
+    try:
+        req = request.json or {}
+        tarefa_id = req.get('id')
+        status_atual = req.get('status', 'Pendente')
+        database.toggle_tarefa_painel_db(tarefa_id, status_atual)
+        return jsonify({"status": "sucesso"}), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
 
 if __name__ == '__main__':
 	print("Servidor rodando...")

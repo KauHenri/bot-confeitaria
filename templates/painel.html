@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#e11d48">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Confeitaria">
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/992/992714.png">
+  <title>🍰 Painel da Chefia — Confeitaria</title>
+
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Alpine.js -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <style>
+    /* Custom iOS smooth scrolling and touch feel */
+    body {
+      -webkit-tap-highlight-color: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .hide-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .hide-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+  </style>
+</head>
+<body class="bg-rose-50/40 text-gray-800 antialiased min-h-screen pb-24" x-data="appData()" x-init="initApp()">
+
+  <!-- HEADER FIXO NO TOPO -->
+  <header class="sticky top-0 z-40 bg-gradient-to-r from-rose-600 via-pink-600 to-rose-500 text-white px-5 py-4 shadow-md flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-full bg-white/20 backdrop-blur flex items-center justify-center text-xl shadow-inner">
+        🍰
+      </div>
+      <div>
+        <h1 class="font-bold text-lg leading-tight">Confeitaria da Nete</h1>
+        <p class="text-xs text-rose-100 flex items-center gap-1">
+          <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+          Bot Online no WhatsApp
+        </p>
+      </div>
+    </div>
+    <button @click="recarregarTudo()" class="p-2 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 transition">
+      <i data-lucide="rotate-cw" class="w-5 h-5"></i>
+    </button>
+  </header>
+
+  <!-- TOAST DE NOTIFICAÇÃO FLUTUANTE -->
+  <div x-show="toast.show" 
+       x-transition:enter="transition ease-out duration-300 transform"
+       x-transition:enter-start="opacity-0 -translate-y-4"
+       x-transition:enter-end="opacity-100 translate-y-0"
+       x-transition:leave="transition ease-in duration-200 transform"
+       x-transition:leave-start="opacity-100 translate-y-0"
+       x-transition:leave-end="opacity-0 -translate-y-4"
+       class="fixed top-20 left-4 right-4 z-50 p-3 rounded-2xl shadow-xl flex items-center gap-3 text-sm font-medium"
+       :class="toast.tipo === 'sucesso' ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'">
+    <i :data-lucide="toast.tipo === 'sucesso' ? 'check-circle' : 'alert-circle'" class="w-5 h-5 flex-shrink-0"></i>
+    <span x-text="toast.mensagem" class="flex-1"></span>
+  </div>
+
+  <!-- CONTEÚDO PRINCIPAL (MUDANÇA DE ABAS) -->
+  <main class="max-w-md mx-auto p-4 space-y-4">
+
+    <!-- ========================================== -->
+    <!-- 🧁 ABA 1: ESTOQUE E CARDÁPIO               -->
+    <!-- ========================================== -->
+    <section x-show="abaAtiva === 'estoque'" x-transition:enter="transition duration-150 ease-out" class="space-y-4">
+      
+      <!-- Card Informativo -->
+      <div class="bg-white rounded-3xl p-5 shadow-sm border border-rose-100/60 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-semibold text-rose-500 uppercase tracking-wider">Disponíveis Hoje</p>
+          <p class="text-3xl font-extrabold text-gray-900 mt-1">
+            <span x-text="stats.itens_disponiveis">0</span>
+            <span class="text-sm font-medium text-gray-400">/ <span x-text="stats.total_itens">0</span> itens</span>
+          </p>
+        </div>
+        <button @click="abrirModalProduto()" class="bg-rose-500 hover:bg-rose-600 active:scale-95 text-white font-medium text-sm px-4 py-2.5 rounded-2xl shadow-sm shadow-rose-200 flex items-center gap-1.5 transition">
+          <i data-lucide="plus" class="w-4 h-4"></i>
+          Novo Doce
+        </button>
+      </div>
+
+      <!-- Ações Rápidas -->
+      <div class="flex items-center justify-between px-1">
+        <h2 class="text-sm font-bold text-gray-600 uppercase tracking-wider">Cardápio do Dia</h2>
+        <button @click="zerarEstoque()" class="text-xs font-semibold text-rose-500 hover:text-rose-700 active:scale-95 transition flex items-center gap-1 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200/50">
+          <i data-lucide="power-off" class="w-3.5 h-3.5"></i>
+          Zerar Tudo
+        </button>
+      </div>
+
+      <!-- Lista de Produtos do Cardápio -->
+      <div class="space-y-2.5">
+        <template x-for="item in estoque" :key="item.id">
+          <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center justify-between transition-all"
+               :class="item.disponivel ? 'border-l-4 border-l-rose-500' : 'opacity-60 bg-gray-50/80'">
+            
+            <div class="flex-1 pr-3" @click="editarProduto(item)">
+              <p class="font-bold text-base text-gray-800" x-text="item.item"></p>
+              <p class="text-sm font-semibold text-rose-600 mt-0.5">
+                R$ <span x-text="formatarDinheiro(item.preco)"></span>
+              </p>
+            </div>
+
+            <!-- Botão de Liga / Desliga (Toggle Grande) -->
+            <button @click="toggleProduto(item)"
+                    class="w-14 h-8 rounded-full transition-colors relative flex items-center p-1 focus:outline-none shadow-inner"
+                    :class="item.disponivel ? 'bg-emerald-500' : 'bg-gray-300'">
+              <div class="w-6 h-6 rounded-full bg-white shadow-md transform transition-transform"
+                   :class="item.disponivel ? 'translate-x-6' : 'translate-x-0'"></div>
+            </button>
+          </div>
+        </template>
+        
+        <div x-show="estoque.length === 0" class="text-center py-10 text-gray-400">
+          <i data-lucide="cake" class="w-12 h-12 mx-auto mb-2 opacity-40"></i>
+          <p>Nenhum produto cadastrado.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- 💰 ABA 2: VENDAS & CAIXA                   -->
+    <!-- ========================================== -->
+    <section x-show="abaAtiva === 'vendas'" x-transition:enter="transition duration-150 ease-out" class="space-y-4">
+      
+      <!-- Resumo do Faturamento Hoje -->
+      <div class="bg-gradient-to-br from-emerald-600 to-teal-700 text-white rounded-3xl p-5 shadow-lg shadow-emerald-700/10">
+        <p class="text-xs font-semibold text-emerald-100 uppercase tracking-wider">Vendido Hoje</p>
+        <p class="text-3xl font-extrabold mt-1">R$ <span x-text="formatarDinheiro(stats.vendas_hoje)">0,00</span></p>
+        <div class="mt-4 pt-3 border-t border-white/15 flex justify-between text-xs text-emerald-100">
+          <span>Pedidos hoje: <strong class="text-white" x-text="stats.qtd_pedidos_hoje">0</strong></span>
+          <span>Atualizado ao vivo ⚡</span>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between px-1">
+        <h2 class="text-sm font-bold text-gray-600 uppercase tracking-wider">Últimas Vendas</h2>
+      </div>
+
+      <!-- Lista de Vendas -->
+      <div class="space-y-2.5">
+        <template x-for="v in vendas" :key="v.id">
+          <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 space-y-1">
+            <div class="flex items-center justify-between">
+              <p class="font-bold text-gray-800 text-sm" x-text="v.nome_cliente || 'Cliente Balcão'"></p>
+              <span class="text-xs px-2.5 py-0.5 rounded-full font-medium"
+                    :class="v.status_pagamento.includes('Pago') ? 'bg-emerald-100 text-emerald-700' : (v.status_pagamento.includes('Cancelado') ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700')"
+                    x-text="v.status_pagamento"></span>
+            </div>
+            <p class="text-xs text-gray-500" x-text="v.pedido"></p>
+            <div class="flex items-center justify-between pt-2 text-xs text-gray-400">
+              <span x-text="v.data_hora"></span>
+              <span class="font-bold text-sm text-gray-900">R$ <span x-text="formatarDinheiro(v.valor)"></span></span>
+            </div>
+          </div>
+        </template>
+        
+        <div x-show="vendas.length === 0" class="text-center py-10 text-gray-400">
+          <i data-lucide="receipt" class="w-12 h-12 mx-auto mb-2 opacity-40"></i>
+          <p>Nenhuma venda registrada ainda.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- 📓 ABA 3: CADERNINHO DIGITAL               -->
+    <!-- ========================================== -->
+    <section x-show="abaAtiva === 'caderninho'" x-transition:enter="transition duration-150 ease-out" class="space-y-4">
+      
+      <!-- Total Devedores -->
+      <div class="bg-gradient-to-br from-amber-500 to-orange-600 text-white rounded-3xl p-5 shadow-lg shadow-amber-600/10">
+        <p class="text-xs font-semibold text-amber-100 uppercase tracking-wider">Total na Rua (A Receber)</p>
+        <p class="text-3xl font-extrabold mt-1">R$ <span x-text="formatarDinheiro(stats.total_rua)">0,00</span></p>
+        <div class="mt-4 pt-3 border-t border-white/15 flex justify-between text-xs text-amber-100">
+          <span>Clientes com débito: <strong class="text-white" x-text="stats.qtd_devedores">0</strong></span>
+          <span>Caderninho Digital 📓</span>
+        </div>
+      </div>
+
+      <!-- Campo de Busca -->
+      <div class="relative">
+        <input type="text" x-model="buscaCliente" placeholder="Buscar cliente pelo nome..." 
+               class="w-full bg-white border border-gray-200 rounded-2xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/20 shadow-sm">
+        <i data-lucide="search" class="w-4 h-4 text-gray-400 absolute left-3.5 top-3.5"></i>
+      </div>
+
+      <!-- Lista de Clientes -->
+      <div class="space-y-2.5">
+        <template x-for="c in clientesFiltrados" :key="c.telefone">
+          <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center justify-between">
+            <div>
+              <p class="font-bold text-gray-900 text-base" x-text="c.nome"></p>
+              <p class="text-xs text-gray-400 mt-0.5" x-text="formatarTelefone(c.telefone)"></p>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="text-xs font-semibold" :class="c.saldo_devedor > 0 ? 'text-rose-600' : 'text-emerald-600'">
+                  Deve: R$ <span x-text="formatarDinheiro(c.saldo_devedor)"></span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Botão Dar Baixa -->
+            <button @click="abrirModalBaixa(c)"
+                    class="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 active:scale-95 border border-emerald-200 font-semibold text-xs px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition">
+              <i data-lucide="hand-coins" class="w-4 h-4"></i>
+              Dar Baixa
+            </button>
+          </div>
+        </template>
+        
+        <div x-show="clientesFiltrados.length === 0" class="text-center py-10 text-gray-400">
+          <i data-lucide="users" class="w-12 h-12 mx-auto mb-2 opacity-40"></i>
+          <p>Nenhum cliente encontrado.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- 📅 ABA 4: TAREFAS & AGENDA                 -->
+    <!-- ========================================== -->
+    <section x-show="abaAtiva === 'tarefas'" x-transition:enter="transition duration-150 ease-out" class="space-y-4">
+      
+      <!-- Card Tarefas Pendentes -->
+      <div class="bg-white rounded-3xl p-5 shadow-sm border border-rose-100/60 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-semibold text-rose-500 uppercase tracking-wider">Pendências</p>
+          <p class="text-3xl font-extrabold text-gray-900 mt-1">
+            <span x-text="stats.tarefas_pendentes">0</span>
+            <span class="text-sm font-medium text-gray-400">encomendas/tarefas</span>
+          </p>
+        </div>
+        <button @click="abrirModalTarefa()" class="bg-rose-500 hover:bg-rose-600 active:scale-95 text-white font-medium text-sm px-4 py-2.5 rounded-2xl shadow-sm shadow-rose-200 flex items-center gap-1.5 transition">
+          <i data-lucide="plus" class="w-4 h-4"></i>
+          Nova Tarefa
+        </button>
+      </div>
+
+      <div class="flex items-center justify-between px-1">
+        <h2 class="text-sm font-bold text-gray-600 uppercase tracking-wider">Lista de Encomendas & Afazeres</h2>
+      </div>
+
+      <!-- Lista de Tarefas -->
+      <div class="space-y-2.5">
+        <template x-for="t in tarefas" :key="t.id">
+          <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-start gap-3 transition"
+               :class="t.status === 'Concluído' ? 'opacity-50 bg-gray-50' : ''">
+            
+            <input type="checkbox" :checked="t.status === 'Concluído'" @change="toggleTarefa(t)"
+                   class="w-5 h-5 rounded-lg text-rose-600 focus:ring-rose-500 border-gray-300 mt-0.5 cursor-pointer">
+            
+            <div class="flex-1">
+              <p class="text-sm font-semibold text-gray-800" :class="t.status === 'Concluído' ? 'line-through text-gray-400' : ''" x-text="t.tarefa"></p>
+              <p class="text-xs text-gray-400 mt-1 flex items-center gap-1">
+                <i data-lucide="calendar" class="w-3.5 h-3.5"></i>
+                <span x-text="t.data"></span>
+              </p>
+            </div>
+          </div>
+        </template>
+
+        <div x-show="tarefas.length === 0" class="text-center py-10 text-gray-400">
+          <i data-lucide="check-circle" class="w-12 h-12 mx-auto mb-2 opacity-40"></i>
+          <p>Tudo em dia! Nenhuma tarefa pendente.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ========================================== -->
+  <!-- BARRA DE NAVEGAÇÃO INFERIOR FIXA (TAB BAR) -->
+  <!-- ========================================== -->
+  <nav class="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-gray-200/80 px-2 py-1.5 shadow-lg">
+    <div class="max-w-md mx-auto grid grid-cols-4 gap-1">
+      
+      <!-- Tab 1: Estoque -->
+      <button @click="mudarAba('estoque')" class="flex flex-col items-center py-2 px-1 rounded-2xl transition"
+              :class="abaAtiva === 'estoque' ? 'text-rose-600 font-bold' : 'text-gray-400 hover:text-gray-600'">
+        <i data-lucide="cake" class="w-5 h-5"></i>
+        <span class="text-[10px] mt-1">Estoque</span>
+      </button>
+
+      <!-- Tab 2: Vendas -->
+      <button @click="mudarAba('vendas')" class="flex flex-col items-center py-2 px-1 rounded-2xl transition"
+              :class="abaAtiva === 'vendas' ? 'text-rose-600 font-bold' : 'text-gray-400 hover:text-gray-600'">
+        <i data-lucide="dollar-sign" class="w-5 h-5"></i>
+        <span class="text-[10px] mt-1">Vendas</span>
+      </button>
+
+      <!-- Tab 3: Caderninho -->
+      <button @click="mudarAba('caderninho')" class="flex flex-col items-center py-2 px-1 rounded-2xl transition"
+              :class="abaAtiva === 'caderninho' ? 'text-rose-600 font-bold' : 'text-gray-400 hover:text-gray-600'">
+        <i data-lucide="book-open" class="w-5 h-5"></i>
+        <span class="text-[10px] mt-1">Caderninho</span>
+      </button>
+
+      <!-- Tab 4: Tarefas -->
+      <button @click="mudarAba('tarefas')" class="flex flex-col items-center py-2 px-1 rounded-2xl transition"
+              :class="abaAtiva === 'tarefas' ? 'text-rose-600 font-bold' : 'text-gray-400 hover:text-gray-600'">
+        <i data-lucide="calendar" class="w-5 h-5"></i>
+        <span class="text-[10px] mt-1">Agenda</span>
+      </button>
+
+    </div>
+  </nav>
+
+  <!-- ========================================== -->
+  <!-- MODAL: CADASTRAR / EDITAR PRODUTO          -->
+  <!-- ========================================== -->
+  <div x-show="modalProduto.aberto" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" x-cloak>
+    <div @click.outside="modalProduto.aberto = false" class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4 shadow-2xl animate-fade-in">
+      <div class="flex items-center justify-between border-b border-gray-100 pb-3">
+        <h3 class="font-bold text-lg text-gray-800" x-text="modalProduto.id ? 'Editar Produto' : 'Novo Produto'"></h3>
+        <button @click="modalProduto.aberto = false" class="text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-gray-500 mb-1">Nome do Doce/Salgado</label>
+          <input type="text" x-model="modalProduto.item" placeholder="Ex: Bolo de Cenoura" class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-500 mb-1">Preço (R$)</label>
+          <input type="number" step="0.50" x-model="modalProduto.preco" placeholder="0.00" class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500">
+        </div>
+        <div class="flex items-center gap-2 pt-1">
+          <input type="checkbox" x-model="modalProduto.disponivel" id="dispCheck" class="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 border-gray-300">
+          <label for="dispCheck" class="text-sm text-gray-700 font-medium cursor-pointer">Disponível para venda hoje</label>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 pt-2">
+        <template x-if="modalProduto.id">
+          <button @click="deletarProduto(modalProduto.id)" class="px-4 py-2.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-xl text-sm font-semibold transition">
+            Excluir
+          </button>
+        </template>
+        <button @click="salvarProduto()" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-sm py-2.5 rounded-xl shadow-md transition">
+          Salvar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MODAL: DAR BAIXA EM CLIENTE (RECEBER PIX)  -->
+  <!-- ========================================== -->
+  <div x-show="modalBaixa.aberto" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" x-cloak>
+    <div @click.outside="modalBaixa.aberto = false" class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-gray-100 pb-3">
+        <div>
+          <h3 class="font-bold text-lg text-gray-800">Dar Baixa no Caderninho</h3>
+          <p class="text-xs text-gray-500" x-text="modalBaixa.cliente.nome"></p>
+        </div>
+        <button @click="modalBaixa.aberto = false" class="text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-center">
+        <p class="text-xs text-amber-700 uppercase font-semibold">Saldo Devedor Atual</p>
+        <p class="text-2xl font-extrabold text-amber-900 mt-0.5">
+          R$ <span x-text="formatarDinheiro(modalBaixa.cliente.saldo_devedor)"></span>
+        </p>
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-500 mb-1">Valor Pago pelo Cliente (R$)</label>
+        <input type="number" step="0.50" x-model="modalBaixa.valor" class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-base font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+      </div>
+
+      <div class="flex gap-2">
+        <button @click="modalBaixa.valor = modalBaixa.cliente.saldo_devedor" class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg font-semibold">
+          Quitar Tudo
+        </button>
+      </div>
+
+      <button @click="confirmarBaixa()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm py-3 rounded-xl shadow-md transition">
+        Confirmar Pagamento
+      </button>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MODAL: NOVA TAREFA / ENCOMENDA             -->
+  <!-- ========================================== -->
+  <div x-show="modalTarefa.aberto" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" x-cloak>
+    <div @click.outside="modalTarefa.aberto = false" class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-gray-100 pb-3">
+        <h3 class="font-bold text-lg text-gray-800">Nova Encomenda ou Tarefa</h3>
+        <button @click="modalTarefa.aberto = false" class="text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-gray-500 mb-1">Descrição</label>
+          <input type="text" x-model="modalTarefa.tarefa" placeholder="Ex: Entregar bolo da Maria às 15h" class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-500 mb-1">Data</label>
+          <input type="text" x-model="modalTarefa.data" placeholder="DD/MM/AAAA" class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500">
+        </div>
+      </div>
+
+      <button @click="salvarTarefa()" class="w-full bg-rose-600 hover:bg-rose-700 text-white font-semibold text-sm py-2.5 rounded-xl shadow-md transition">
+        Salvar Tarefa
+      </button>
+    </div>
+  </div>
+
+  <!-- SCRIPT ALPINE.JS & LÓGICA -->
+  <script>
+    function appData() {
+      return {
+        abaAtiva: 'estoque',
+        buscaCliente: '',
+        stats: {
+          vendas_hoje: 0,
+          qtd_pedidos_hoje: 0,
+          total_rua: 0,
+          qtd_devedores: 0,
+          total_itens: 0,
+          itens_disponiveis: 0,
+          tarefas_pendentes: 0
+        },
+        estoque: [],
+        vendas: [],
+        clientes: [],
+        tarefas: [],
+        toast: { show: false, mensagem: '', tipo: 'sucesso' },
+        modalProduto: { aberto: false, id: null, item: '', preco: '', disponivel: true },
+        modalBaixa: { aberto: false, cliente: {}, valor: 0 },
+        modalTarefa: { aberto: false, tarefa: '', data: '' },
+
+        initApp() {
+          this.recarregarTudo();
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        mostrarToast(msg, tipo = 'sucesso') {
+          this.toast.mensagem = msg;
+          this.toast.tipo = tipo;
+          this.toast.show = true;
+          this.$nextTick(() => lucide.createIcons());
+          setTimeout(() => { this.toast.show = false; }, 3500);
+        },
+
+        mudarAba(novaAba) {
+          this.abaAtiva = novaAba;
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        formatarDinheiro(val) {
+          return Number(val || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        },
+
+        formatarTelefone(tel) {
+          if (!tel) return '';
+          return tel.replace('@c.us', '').replace('@s.whatsapp.net', '');
+        },
+
+        get clientesFiltrados() {
+          if (!this.buscaCliente) return this.clientes;
+          const busca = this.buscaCliente.toLowerCase();
+          return this.clientes.filter(c => c.nome.toLowerCase().includes(busca) || c.telefone.includes(busca));
+        },
+
+        async recarregarTudo() {
+          try {
+            const [resStats, resEstoque, resVendas, resClientes, resTarefas] = await Promise.all([
+              fetch('/api/painel/stats').then(r => r.json()),
+              fetch('/api/painel/estoque').then(r => r.json()),
+              fetch('/api/painel/vendas').then(r => r.json()),
+              fetch('/api/painel/clientes').then(r => r.json()),
+              fetch('/api/painel/tarefas').then(r => r.json())
+            ]);
+
+            this.stats = resStats;
+            this.estoque = resEstoque;
+            this.vendas = resVendas;
+            this.clientes = resClientes;
+            this.tarefas = resTarefas;
+            this.$nextTick(() => lucide.createIcons());
+          } catch (e) {
+            console.error(e);
+            this.mostrarToast('Erro ao carregar dados.', 'erro');
+          }
+        },
+
+        async toggleProduto(item) {
+          const novoStatus = !item.disponivel;
+          item.disponivel = novoStatus;
+          try {
+            await fetch('/api/painel/estoque/toggle', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: item.id, disponivel: novoStatus })
+            });
+            this.recarregarTudo();
+            this.mostrarToast(`${item.item} ${novoStatus ? 'ativado' : 'desativado'}!`);
+          } catch (e) {
+            this.mostrarToast('Erro ao atualizar produto.', 'erro');
+          }
+        },
+
+        async zerarEstoque() {
+          if (!confirm('Deseja desativar TODOS os produtos do cardápio de hoje?')) return;
+          try {
+            await fetch('/api/painel/estoque/zerar', { method: 'POST' });
+            this.recarregarTudo();
+            this.mostrarToast('Estoque de hoje zerado!');
+          } catch (e) {
+            this.mostrarToast('Erro ao zerar estoque.', 'erro');
+          }
+        },
+
+        abrirModalProduto() {
+          this.modalProduto = { aberto: true, id: null, item: '', preco: '', disponivel: true };
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        editarProduto(item) {
+          this.modalProduto = { aberto: true, id: item.id, item: item.item, preco: item.preco, disponivel: !!item.disponivel };
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        async salvarProduto() {
+          if (!this.modalProduto.item || !this.modalProduto.preco) {
+            this.mostrarToast('Preencha o nome e o preço.', 'erro');
+            return;
+          }
+          try {
+            await fetch('/api/painel/estoque/salvar', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.modalProduto)
+            });
+            this.modalProduto.aberto = false;
+            this.recarregarTudo();
+            this.mostrarToast('Produto salvo com sucesso!');
+          } catch (e) {
+            this.mostrarToast('Erro ao salvar produto.', 'erro');
+          }
+        },
+
+        async deletarProduto(id) {
+          if (!confirm('Excluir este produto do cardápio definitivamente?')) return;
+          try {
+            await fetch('/api/painel/estoque/deletar', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id })
+            });
+            this.modalProduto.aberto = false;
+            this.recarregarTudo();
+            this.mostrarToast('Produto excluído.');
+          } catch (e) {
+            this.mostrarToast('Erro ao excluir produto.', 'erro');
+          }
+        },
+
+        abrirModalBaixa(cliente) {
+          this.modalBaixa = { aberto: true, cliente, valor: cliente.saldo_devedor };
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        async confirmarBaixa() {
+          if (!this.modalBaixa.valor || this.modalBaixa.valor <= 0) {
+            this.mostrarToast('Digite um valor válido.', 'erro');
+            return;
+          }
+          try {
+            const res = await fetch('/api/painel/clientes/baixa', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ telefone: this.modalBaixa.cliente.telefone, valor: this.modalBaixa.valor })
+            }).then(r => r.json());
+
+            this.modalBaixa.aberto = false;
+            this.recarregarTudo();
+            this.mostrarToast(res.mensagem || 'Baixa registrada!');
+          } catch (e) {
+            this.mostrarToast('Erro ao registrar baixa.', 'erro');
+          }
+        },
+
+        abrirModalTarefa() {
+          const hoje = new Date();
+          const dia = String(hoje.getDate()).padStart(2, '0');
+          const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+          const ano = hoje.getFullYear();
+          this.modalTarefa = { aberto: true, tarefa: '', data: `${dia}/${mes}/${ano}` };
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        async salvarTarefa() {
+          if (!this.modalTarefa.tarefa) {
+            this.mostrarToast('Digite a descrição da tarefa.', 'erro');
+            return;
+          }
+          try {
+            await fetch('/api/painel/tarefas/salvar', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.modalTarefa)
+            });
+            this.modalTarefa.aberto = false;
+            this.recarregarTudo();
+            this.mostrarToast('Tarefa adicionada!');
+          } catch (e) {
+            this.mostrarToast('Erro ao salvar tarefa.', 'erro');
+          }
+        },
+
+        async toggleTarefa(tarefa) {
+          try {
+            await fetch('/api/painel/tarefas/toggle', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: tarefa.id, status: tarefa.status })
+            });
+            this.recarregarTudo();
+          } catch (e) {
+            this.mostrarToast('Erro ao atualizar tarefa.', 'erro');
+          }
+        }
+      };
+    }
+  </script>
+</body>
+</html>

@@ -605,6 +605,43 @@ def verificar_aniversariantes_db():
             return msg
         return None
 
+def calcular_preco_em_doces_db(item_desejado, valor_item):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT item, preco FROM estoque WHERE lower(item) LIKE '%bolo de fubá (maior)%'")
+        row = cursor.fetchone()
+        if not row or row['preco'] <= 0:
+            cursor.execute("SELECT item, preco FROM estoque WHERE preco > 0 LIMIT 1")
+            row = cursor.fetchone()
+        if row and row['preco'] > 0:
+            preco_ref = row['preco']
+            produto_ref = row['item']
+            faturamento_necessario = valor_item * 5
+            qtd_real = int(faturamento_necessario / preco_ref)
+            msg = f"🤔 *Análise de Compra: {item_desejado.title()}*\n\n"
+            msg += f"Chefe, esse item custa R$ {valor_item:.2f}.\n\n".replace('.', ',')
+            msg += f"Pela nossa *Regra dos Potes*, para você colocar esse valor limpo no bolso sem tirar o dinheiro de repor ingredientes da empresa, a confeitaria precisa faturar R$ {faturamento_necessario:.2f}!\n\n".replace('.', ',')
+            msg += f"🥵 Na prática, você vai precisar assar e vender **{qtd_real} {produto_ref}s** só para pagar isso.\n\n"
+            msg += "Vale a pena o esforço ou deixamos para o mês que vem? 😅"
+            return True, msg
+        return False, "Chefe, não consegui calcular o suor porque não achei o preço dos produtos."
+
+def verificar_aniversariantes_db():
+    from datetime import datetime
+    data_hoje = datetime.now().strftime("%d/%m")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT nome, telefone FROM clientes WHERE data_nascimento LIKE ?", (f"{data_hoje}%",))
+        aniversariantes = cursor.fetchall()
+        if aniversariantes:
+            msg = "🎉 *ANIVERSARIANTES DO DIA!* 🎉\n\n"
+            for a in aniversariantes:
+                tel = a['telefone'].split('@')[0] if '@' in a['telefone'] else a['telefone']
+                msg += f"▫️ {a['nome']} ({tel})\n"
+            msg += "\nChefe, que tal mandar uma mensagem de parabéns ou oferecer um mimo?"
+            return msg
+        return None
+
 def gerar_relatorio_semanal_db():
     from datetime import datetime, timedelta
     agora = datetime.now()
@@ -644,3 +681,128 @@ def gerar_relatorio_semanal_db():
         msg += f"📉 Gastamos: R$ {total_gasto:.2f}\n".replace('.', ',')
         msg += f"💰 *Lucro da Semana:* R$ {lucro:.2f}".replace('.', ',')
         return msg
+
+# --- 📱 FUNÇÕES ESPECÍFICAS PARA O PAINEL WEB MOBILE ---
+
+def obter_resumo_painel_db():
+    from datetime import datetime
+    hoje_str = datetime.now().strftime("%d/%m/%Y")
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        
+        # Vendas de hoje
+        cursor.execute("SELECT valor FROM vendas WHERE data_hora LIKE ? AND status_pagamento NOT LIKE '%Cancelado%'", (f"{hoje_str}%",))
+        vendas_hoje = cursor.fetchall()
+        total_vendas_hoje = sum(v['valor'] for v in vendas_hoje)
+        qtd_pedidos_hoje = len(vendas_hoje)
+        
+        # Total devedores (na rua)
+        cursor.execute("SELECT SUM(saldo_devedor) as total_rua, COUNT(telefone) as qtd_devedores FROM clientes WHERE saldo_devedor > 0.01")
+        row_devedores = cursor.fetchone()
+        total_rua = row_devedores['total_rua'] or 0.0
+        qtd_devedores = row_devedores['qtd_devedores'] or 0
+        
+        # Estoque
+        cursor.execute("SELECT COUNT(id) as total_itens, SUM(CASE WHEN disponivel = 1 THEN 1 ELSE 0 END) as disponiveis FROM estoque")
+        row_estoque = cursor.fetchone()
+        total_itens = row_estoque['total_itens'] or 0
+        itens_disponiveis = row_estoque['disponiveis'] or 0
+        
+        # Tarefas pendentes
+        cursor.execute("SELECT COUNT(id) as tarefas_pendentes FROM tarefas WHERE status = 'Pendente'")
+        row_tarefas = cursor.fetchone()
+        tarefas_pendentes = row_tarefas['tarefas_pendentes'] or 0
+        
+        return {
+            "vendas_hoje": total_vendas_hoje,
+            "qtd_pedidos_hoje": qtd_pedidos_hoje,
+            "total_rua": total_rua,
+            "qtd_devedores": qtd_devedores,
+            "total_itens": total_itens,
+            "itens_disponiveis": itens_disponiveis,
+            "tarefas_pendentes": tarefas_pendentes
+        }
+
+def listar_estoque_painel_db():
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, item, preco, disponivel FROM estoque ORDER BY item ASC")
+        return [dict(row) for row in cursor.fetchall()]
+
+def toggle_produto_painel_db(item_id, novo_status):
+    with get_db() as conn:
+        conn.execute("UPDATE estoque SET disponivel = ? WHERE id = ?", (1 if novo_status else 0, item_id))
+        conn.commit()
+    return True
+
+def salvar_produto_painel_db(nome, preco, disponivel, item_id=None):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if item_id:
+            cursor.execute("UPDATE estoque SET item = ?, preco = ?, disponivel = ? WHERE id = ?", (nome, float(preco), 1 if disponivel else 0, item_id))
+        else:
+            cursor.execute("INSERT INTO estoque (item, preco, disponivel) VALUES (?, ?, ?)", (nome, float(preco), 1 if disponivel else 0))
+        conn.commit()
+    return True
+
+def deletar_produto_painel_db(item_id):
+    with get_db() as conn:
+        conn.execute("DELETE FROM estoque WHERE id = ?", (item_id,))
+        conn.commit()
+    return True
+
+def listar_vendas_painel_db(limite=50):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, data_hora, nome_cliente, pedido, valor, local, status_pagamento FROM vendas ORDER BY id DESC LIMIT ?", (limite,))
+        return [dict(row) for row in cursor.fetchall()]
+
+def listar_clientes_painel_db():
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT telefone, nome, total_comprado, total_pago, saldo_devedor FROM clientes ORDER BY saldo_devedor DESC, nome ASC")
+        return [dict(row) for row in cursor.fetchall()]
+
+def registrar_baixa_painel_db(telefone, valor_pago):
+    from datetime import datetime
+    valor = float(valor_pago)
+    data_hoje = datetime.now().strftime("%d/%m/%Y")
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT nome, total_pago, total_comprado, saldo_devedor FROM clientes WHERE telefone = ?", (telefone,))
+        cliente = cursor.fetchone()
+        
+        if cliente:
+            novo_pago = (cliente['total_pago'] or 0.0) + valor
+            novo_saldo = max(0.0, (cliente['total_comprado'] or 0.0) - novo_pago)
+            
+            cursor.execute("UPDATE clientes SET total_pago = ?, saldo_devedor = ? WHERE telefone = ?", (novo_pago, novo_saldo, telefone))
+            
+            # Registra no fluxo financeiro
+            cursor.execute('''INSERT INTO financas (data, tipo, descricao, valor, categoria)
+                              VALUES (?, 'Entrada', ?, ?, 'Pagamento_Cliente')''',
+                           (data_hoje, f"Baixa de Fiado - {cliente['nome']}", valor))
+            conn.commit()
+            return True, f"Baixa de R$ {valor:.2f} registrada com sucesso para {cliente['nome']}!"
+    return False, "Cliente não encontrado."
+
+def listar_tarefas_painel_db():
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, data, tarefa, status FROM tarefas ORDER BY id DESC LIMIT 50")
+        return [dict(row) for row in cursor.fetchall()]
+
+def salvar_tarefa_painel_db(tarefa, data_tarefa):
+    with get_db() as conn:
+        conn.execute("INSERT INTO tarefas (data, tarefa, status) VALUES (?, ?, 'Pendente')", (data_tarefa, tarefa))
+        conn.commit()
+    return True
+
+def toggle_tarefa_painel_db(tarefa_id, status_atual):
+    novo_status = 'Concluído' if status_atual == 'Pendente' else 'Pendente'
+    with get_db() as conn:
+        conn.execute("UPDATE tarefas SET status = ? WHERE id = ?", (novo_status, tarefa_id))
+        conn.commit()
+    return True
