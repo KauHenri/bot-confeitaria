@@ -410,9 +410,6 @@ def webhook(subpath=None):
 	try:
 		dados_completos = request.json
 		print(f"\n--- NOVO WEBHOOK ---", flush=True)
-		import json, sys
-		print(json.dumps(dados_completos, indent=2), flush=True)
-		sys.stdout.flush()
 		
 		if not dados_completos:
 			return jsonify({"erro": "Dados inválidos"}), 400
@@ -434,591 +431,596 @@ def webhook(subpath=None):
 		if key.get('fromMe', False):
 			return jsonify({"status": "ignorado_from_me"}), 200
 			
-		chat_id = key.get('remoteJid', '')
-		if chat_id == 'status@broadcast':
-			return jsonify({"status": "ignorado_status"}), 200
-			
-		numero = key.get('participant', chat_id)
-		
-		# Novo WhatsApp (LID) - Se veio o LID, tentamos pegar o número alternativo se existir
-		numero_alt = key.get('participantAlt', key.get('remoteJidAlt', ''))
-		if numero_alt:
-			numero = numero_alt
-		
-		# Normaliza formato para @c.us
-		if numero and '@s.whatsapp.net' in numero:
-			numero = numero.replace('@s.whatsapp.net', '@c.us')
-		if chat_id and '@s.whatsapp.net' in chat_id:
-			chat_id = chat_id.replace('@s.whatsapp.net', '@c.us')
-
-		print(f"👀 [DEBUG] Mensagem recebida do número: '{numero}' (Chat: '{chat_id}')")
-
-		if NUMERO_TESTE and NUMERO_TESTE != "000" and numero not in NUMERO_TESTE:
-			if chat_id != ID_GRUPO_ADMIN:
-				print(f"🔒 [DEBUG] Bloqueado! O número recebido não bate com o NUMERO_TESTE: '{NUMERO_TESTE}'")
-				return jsonify({"status": "ignorado"}), 200
-		
-		nome_enviado = dados.get('pushName')
-		nome_cliente = nome_enviado if nome_enviado else numero.split('@')[0]
-		
-		is_group = chat_id.endswith('@g.us')
-		contexto_grupo = dados.get('groupContext', {})
-		nome_grupo = contexto_grupo.get('groupName', 'Grupo' if is_group else 'Privado')
-		
-		msg_obj = dados.get('message', {})
-		mensagem = ""
-		if isinstance(msg_obj, dict):
-			if 'conversation' in msg_obj:
-				mensagem = msg_obj['conversation']
-			elif 'extendedTextMessage' in msg_obj:
-				mensagem = msg_obj['extendedTextMessage'].get('text', '')
-			elif 'imageMessage' in msg_obj:
-				mensagem = msg_obj['imageMessage'].get('caption', '')
-			elif 'documentMessage' in msg_obj:
-				mensagem = msg_obj['documentMessage'].get('caption', '')
-		elif isinstance(msg_obj, str):
-			mensagem = msg_obj
-			
-		media_info = dados.get('media', {})
-		media_data = media_info.get('data') or dados.get('base64')
-		media_mime = media_info.get('mimeType') or dados.get('mimetype')
-		
-		# --- 🎭 INÍCIO DO MODO CAMUFLAGEM (MOCK) 🎭 ---
-		if numero in NUMERO_TESTE and mensagem.lower().startswith("simular "):
+		import threading
+		def background_task(dados_completos, dados, key):
 			try:
-				partes = mensagem.split(":", 1)
-				if len(partes) == 2:
-					nome_falso = partes[0].lower().replace("simular ", "").title().strip()
-					mensagem = partes[1].strip()
+					chat_id = key.get('remoteJid', '')
+				if chat_id == 'status@broadcast':
+					return jsonify({"status": "ignorado_status"}), 200
 					
-					if nome_falso.lower() == "admin" or nome_falso.lower() == "chefe":
-						numero = NUMERO_ADMIN
-						nome_cliente = "Chefe (Simulado)"
-						print(f"🎭 [MODO TESTE] Simulando a CHEFE.")
-					else:
-						nome_cliente = nome_falso
-						numero = f"553800000000_{nome_falso.lower().replace(' ', '_')}@c.us" 
-						print(f"🎭 [MODO TESTE] Simulando cliente: {nome_cliente}")
-			except Exception as e:
-				print(f"Erro na camuflagem: {e}")
-		# --- FIM DO MODO CAMUFLAGEM ---
-
-		chave_historico = f"{chat_id}_{numero}"
-		info_tempo = obter_contexto_data()
-		onde_estamos = f"Estamos conversando no grupo '{nome_grupo}'." if is_group else "Estamos em uma conversa no Privado."
-		
-		if chave_historico not in historico_conversas:
-			historico_conversas[chave_historico] = []
-			
-		texto_historico = mensagem if mensagem else f"[Mídia enviada: {media_mime}]"
-		
-		historico_conversas[chave_historico].append(f"{nome_cliente}: {texto_historico}")
-			
-		historico_conversas[chave_historico] = historico_conversas[chave_historico][-20:]
-		salvar_historico() 
-
-		contexto_completo = "\n".join(historico_conversas[chave_historico][-5:])
-		
-		print(f"\n--- Nova Mensagem de {nome_cliente} ({numero}) ---")
-		print(f"Local: {nome_grupo} | Texto: {mensagem}")
-		
-		resposta_para_whatsapp = ""
-		notificacao_para_admin = ""
-		resposta_privada = ""
-		
-		# --- MODO CHEFE (ADMINISTRADOR) ---
-		if numero == NUMERO_ADMIN or chat_id == ID_GRUPO_ADMIN:
-			print("👑 Processando comando da chefe...")
-			estoque_completo = obter_cardapio_completo()
-			
-			prompt_chefe = f"""
-			{info_tempo}
-			ESTOQUE ATUAL NA PLANILHA:
-			{estoque_completo}
-
-			Histórico da conversa:
-			{contexto_completo}
-			
-			Chefe diz: {mensagem}
-			"""
-
-			conteudo_ia_chefe = [prompt_chefe]
-			
-			if media_data and media_mime:
-				conteudo_ia_chefe.append({
-					"mime_type": media_mime,
-					"data": media_data
-				})
+				numero = key.get('participant', chat_id)
 				
-			resposta_ia = modelo_admin.generate_content(conteudo_ia_chefe)
-			
-			try:
-				txt_limpo = resposta_ia.text.strip()
-				if txt_limpo.startswith('```json'):
-					txt_limpo = txt_limpo[7:]
-				if txt_limpo.startswith('```'):
-					txt_limpo = txt_limpo[3:]
-				if txt_limpo.endswith('```'):
-					txt_limpo = txt_limpo[:-3]
-					
-				dados_extraidos = json.loads(txt_limpo.strip())
+				# Novo WhatsApp (LID) - Se veio o LID, tentamos pegar o número alternativo se existir
+				numero_alt = key.get('participantAlt', key.get('remoteJidAlt', ''))
+				if numero_alt:
+					numero = numero_alt
 				
-				acao = dados_extraidos.get("acao")
+				# Normaliza formato para @c.us
+				if numero and '@s.whatsapp.net' in numero:
+					numero = numero.replace('@s.whatsapp.net', '@c.us')
+				if chat_id and '@s.whatsapp.net' in chat_id:
+					chat_id = chat_id.replace('@s.whatsapp.net', '@c.us')
+		
+				print(f"👀 [DEBUG] Mensagem recebida do número: '{numero}' (Chat: '{chat_id}')")
+		
+				if NUMERO_TESTE and NUMERO_TESTE != "000" and numero not in NUMERO_TESTE:
+					if chat_id != ID_GRUPO_ADMIN:
+						print(f"🔒 [DEBUG] Bloqueado! O número recebido não bate com o NUMERO_TESTE: '{NUMERO_TESTE}'")
+						return jsonify({"status": "ignorado"}), 200
 				
-				if acao == "registrar_financa":
-					# Usamos .get() com valores padrão para evitar o KeyError
-					tipo_gasto = dados_extraidos.get("tipo", "Despesa")
-					desc_gasto = dados_extraidos.get("descricao", "Conta")
-					valor_gasto = dados_extraidos.get("valor", 0)
-					aba_destino = dados_extraidos.get("categoria_aba", "Financas_Empresa")
-					data_vencimento = dados_extraidos.get("data_vencimento", "")
-
-					sucesso = registrar_gasto_admin(
-						tipo=tipo_gasto,
-						descricao=desc_gasto,
-						valor=valor_gasto,
-						categoria_aba=aba_destino
-					)
+				nome_enviado = dados.get('pushName')
+				nome_cliente = nome_enviado if nome_enviado else numero.split('@')[0]
+				
+				is_group = chat_id.endswith('@g.us')
+				contexto_grupo = dados.get('groupContext', {})
+				nome_grupo = contexto_grupo.get('groupName', 'Grupo' if is_group else 'Privado')
+				
+				msg_obj = dados.get('message', {})
+				mensagem = ""
+				if isinstance(msg_obj, dict):
+					if 'conversation' in msg_obj:
+						mensagem = msg_obj['conversation']
+					elif 'extendedTextMessage' in msg_obj:
+						mensagem = msg_obj['extendedTextMessage'].get('text', '')
+					elif 'imageMessage' in msg_obj:
+						mensagem = msg_obj['imageMessage'].get('caption', '')
+					elif 'documentMessage' in msg_obj:
+						mensagem = msg_obj['documentMessage'].get('caption', '')
+				elif isinstance(msg_obj, str):
+					mensagem = msg_obj
 					
-					if sucesso:
-						resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Anotado, chefe! Lancei a conta de {desc_gasto} no valor de R$ {valor_gasto}.")
-						
-						# --- NOVA INTEGRAÇÃO: AGENDA PARA CONTAS ---
-						if data_vencimento:
-							sucesso_agenda = criar_evento_agenda(
-								titulo=f"💸 Pagar: {desc_gasto}",
-								data_entrega=data_vencimento,
-								descricao=f"Valor: R$ {valor_gasto}\nTipo: {tipo_gasto}"
-							)
-							if sucesso_agenda:
-								resposta_para_whatsapp += f"\n\n📅 Também já coloquei um lembrete na sua Google Agenda para o dia {data_vencimento}!"
-							else:
-								resposta_para_whatsapp += f"\n\n⚠️ Tentei salvar na Agenda para o dia {data_vencimento}, mas ocorreu um erro."
-					else:
-						resposta_para_whatsapp = "Chefe, entendi o gasto, mas a planilha não aceitou o registro. Verifique se as colunas estão certas!"
-
-				elif acao == "atualizar_estoque":
-					itens = dados_extraidos.get("itens_estoque", [])
-					sucesso = atualizar_estoque(itens)
-					resposta_para_whatsapp = dados_extraidos["resposta_amigavel"] if sucesso else "Chefe, deu um problema ao salvar os itens no estoque. Tente de novo!"
-
-				elif acao == "listar_devedores":
-					resposta_para_whatsapp = listar_todos_devedores()
-
-				elif acao == "atualizar_pagamento":
-					cliente_pagou = dados_extraidos.get("nome_cliente", "")
-					valor_pago = dados_extraidos.get("valor_pago", 0)
-					
-					if cliente_pagou:
-						if valor_pago > 0:
-							sucesso, msg_retorno = registrar_pagamento_fiado(cliente_pagou, valor_pago)
-						else:
-							sucesso, msg_retorno = atualizar_status_pagamento(cliente_pagou)
-							
-						resposta_para_whatsapp = msg_retorno
-					else:
-						resposta_para_whatsapp = "Chefe, não entendi de quem foi o Pix. Pode repetir?"
-
-				elif acao == "confirmar_encomenda":
-					cliente_alvo = dados_extraidos.get("nome_cliente", "")
-					valor_final = dados_extraidos.get("valor_total", 0)
-					
-					if cliente_alvo and valor_final > 0:
-						sucesso, msg = confirmar_encomenda_admin(cliente_alvo, valor_final)
-						if sucesso:
-							# --- INTEGRAÇÃO COM A AGENDA ---
-							# Aqui pegamos os detalhes do pedido que já estão na planilha
-							sucesso_agenda = criar_evento_agenda(
-								titulo=f"🎂 Encomenda: {cliente_alvo}",
-								data_entrega=dados_extraidos.get("data_entrega", ""), # A IA extrai a data absoluta
-								descricao=f"Valor: R$ {valor_final}\nPedido: {dados_extraidos.get('pedido', '')}"
-							)
-							if sucesso_agenda:
-								resposta_para_whatsapp = msg + "\n\n📅 Também já salvei na sua Google Agenda com um lembrete!"
-							else:
-								resposta_para_whatsapp = msg + "\n\n⚠️ Avisei na planilha, mas tive um erro ao acessar sua Agenda."
-						else:
-							resposta_para_whatsapp = msg
-
-				elif acao == "consultar_pedidos":
-					sucesso, relatorio = relatorio_pedidos_admin()
-					resposta_para_whatsapp = relatorio
-
-				elif acao == "consultar_extrato_cliente":
-					cliente_alvo = dados_extraidos.get("nome_cliente", "")
-					if cliente_alvo:
-						sucesso, extrato = gerar_extrato_fiado(cliente_alvo, por_telefone=False)
-						resposta_para_whatsapp = extrato
-					else:
-						resposta_para_whatsapp = "Chefe, de quem você quer ver o extrato? Faltou o nome!"
-
-				elif acao == "registrar_venda_manual":
-					cliente_alvo = dados_extraidos.get("nome_cliente", "")
-					pedido_texto = dados_extraidos.get("pedido", "")
-					itens = dados_extraidos.get("itens_vendidos", [])
-					
-					valor_venda = calcular_total_seguro(itens) if itens else float(dados_extraidos.get("valor_total", 0))
-					
-					if cliente_alvo and valor_venda > 0:
-						status_busca, resultado_busca = buscar_telefone_na_agenda(cliente_alvo)
-						
-						if status_busca == "duvida":
-							resposta_para_whatsapp = f"Chefe, segurei a venda porque achei várias pessoas com esse nome: *{resultado_busca}*.\n\nPode mandar o pedido de novo falando o nome inteiro da pessoa certa?"
-						else:
-							tel_cliente = resultado_busca
-							
-							sucesso_venda = registrar_venda(
-								telefone=tel_cliente,
-								nome_cliente=cliente_alvo,
-								pedido=pedido_texto,
-								valor=valor_venda, 
-								local="Balcão/Presencial",
-								itens_vendidos=itens
-							)
-							
-							if sucesso_venda:
-								atualizar_compra_cliente(tel_cliente, cliente_alvo, valor_venda)
-								resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Prontinho, chefe! Venda lançada para {cliente_alvo} no valor de R$ {valor_venda:.2f}.")
-							else:
-								resposta_para_whatsapp = "Chefe, a planilha deu um erro e recusou a gravação. Tente de novo!"
-					else:
-						resposta_para_whatsapp = "Chefe, não entendi direito o nome do cliente ou o valor final. Pode repetir?"
-
-				elif acao == "cancelar_venda_cliente":
-					cliente_alvo = dados_extraidos.get("nome_cliente", "")
-					if cliente_alvo:
-						sucesso, msg_retorno = cancelar_pedido_admin(cliente_alvo)
-						resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", msg_retorno) if sucesso else msg_retorno
-					else:
-						resposta_para_whatsapp = "Chefe, de quem você quer cancelar a venda? Faltou o nome!"
-
-				elif acao == "alterar_status_loja":
-					novo_status = dados_extraidos.get("novo_status", "ABERTO")
-					salvar_status_loja(novo_status)
-					resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Feito, chefe! A confeitaria agora está no modo: {novo_status}")
-
-				elif acao == "gerar_dre_mensal":
-					mes_ref = dados_extraidos.get("mes_referencia")
-					sucesso, dre = gerar_relatorio_financeiro(mes_ref)
-					resposta_para_whatsapp = dre
-
-				elif acao == "remover_evento_agenda":
-					titulo_alvo = dados_extraidos.get("titulo", "")
-					data_alvo = dados_extraidos.get("data_vencimento", "")
-					
-					if titulo_alvo and data_alvo:
-						sucesso, msg = deletar_evento_agenda(titulo_alvo, data_alvo)
-						resposta_para_whatsapp = msg
-					else:
-						resposta_para_whatsapp = "Chefe, preciso que você me fale o nome do compromisso e a data para eu conseguir apagar da agenda."
-
-				elif acao == "agendar_compromisso":
-					eventos_lista = dados_extraidos.get("eventos", [])
-					if not eventos_lista:
-						# Fallback para o formato antigo de um único evento
-						eventos_lista = [dados_extraidos]
-					
-					agendados = 0
-					for ev in eventos_lista:
-						titulo = ev.get("titulo", "Compromisso")
-						data = ev.get("data_vencimento")
-						hora = ev.get("hora_inicio")
-						if data and hora:
-							sucesso = criar_evento_agenda(titulo, data, "Agendado via Assistente", hora)
-							if sucesso: agendados += 1
-					
-					if agendados > 0:
-						resposta_para_whatsapp = f"Pronto! Agendei os {agendados} horários na sua agenda para não esquecer."
-					else:
-						resposta_para_whatsapp = "Não consegui marcar na agenda. Verifique se me passou as datas certas."
-
-				elif acao == "anotar_lembrete_geral":
-					item_tarefa = dados_extraidos.get("tarefa", "")
-					if item_tarefa:
-						sucesso = registrar_tarefa_lista(item_tarefa)
-						resposta_para_whatsapp = f"Anotado na sua lista de tarefas, chefe: '{item_tarefa}'!" if sucesso else "Erro ao salvar na lista."
-
-				elif acao == "importar_fiados_lote":
-					lista_fiados = dados_extraidos.get("lista_fiados", [])
-					
-					if not lista_fiados:
-						resposta_para_whatsapp = "Chefe, olhei a foto mas não consegui identificar nenhum nome ou valor claro. Pode tentar tirar uma foto mais de perto ou com mais luz?"
-					else:
-						resultados = []
-						for fiado in lista_fiados:
-							nome_alvo = fiado.get("nome_cliente", "")
-							try:
-								valor_bruto = fiado.get("valor_total", 0)
-								# Se a IA já enviou um número puro, apenas usamos
-								if isinstance(valor_bruto, (int, float)):
-									valor_divida = float(valor_bruto)
-								else:
-									# Se a IA enviou como texto (ex: "R$ 27,00"), limpamos com segurança
-									v_str = str(valor_bruto).replace("R$", "").strip()
-									if "," in v_str:
-										v_str = v_str.replace(".", "").replace(",", ".")
-									valor_divida = float(v_str)
-							except Exception as e:
-								print(f"Erro na conversão do valor: {e}")
-								valor_divida = 0.0
-								
-							if nome_alvo and valor_divida > 0:
-								# Procura o contato do caderno na agenda do celular
-								status_busca, resultado_busca = buscar_telefone_na_agenda(nome_alvo)
-								
-								if status_busca == "sucesso":
-									telefone_real = resultado_busca
-									# Lança como se fosse uma venda fiada antiga
-									sucesso_venda = registrar_venda(
-										telefone=telefone_real,
-										nome_cliente=nome_alvo,
-										pedido="Importação de caderno antigo (Foto)",
-										valor=valor_divida,
-										local="Migração de Dados",
-										itens_vendidos=[],
-										status_pagamento="Pendente ⏳"
-									)
-									if sucesso_venda:
-										atualizar_compra_cliente(telefone_real, nome_alvo, valor_divida)
-										resultados.append(f"✅ *{nome_alvo}*: Adicionado (R$ {valor_divida:.2f})")
-									else:
-										resultados.append(f"❌ *{nome_alvo}*: Falha ao salvar na planilha.")
-								elif status_busca == "duvida":
-									resultados.append(f"⚠️ *{nome_alvo}*: Achei vários contatos com esse nome. Lance manualmente.")
-								else:
-									resultados.append(f"❌ *{nome_alvo}*: Não encontrei esse nome na agenda do celular.")
-									
-						resposta_para_whatsapp = "📸 *LEITURA DO CADERNO CONCLUÍDA:*\n\n" + "\n".join(resultados)
-						resposta_para_whatsapp += "\n\nSe alguém ficou de fora, verifique se o nome no papel está escrito igual ao nome salvo nos contatos!"
-
-				elif acao == "analisar_compra_pessoal":
-					item = dados_extraidos.get("item_desejado", "compra")
+				media_info = dados.get('media', {})
+				media_data = media_info.get('data') or dados.get('base64')
+				media_mime = media_info.get('mimeType') or dados.get('mimetype')
+				
+				# --- 🎭 INÍCIO DO MODO CAMUFLAGEM (MOCK) 🎭 ---
+				if numero in NUMERO_TESTE and mensagem.lower().startswith("simular "):
 					try:
-						valor = float(dados_extraidos.get("valor_item", 0))
-					except:
-						valor = 0.0
-						
-					if valor > 0:
-						sucesso, msg = calcular_preco_em_doces(item, valor)
-						resposta_para_whatsapp = msg
-					else:
-						resposta_para_whatsapp = "Chefe, não entendi o valor exato. Quanto custa isso que você quer comprar?"
-
-				elif acao == "processar_nota_fiscal":
-					mercado = dados_extraidos.get("supermercado", "Supermercado")
-					valor_empresa = float(dados_extraidos.get("valor_empresa", 0))
-					valor_pessoal = float(dados_extraidos.get("valor_pessoal", 0))
-					itens_empresa = dados_extraidos.get("itens_empresa", [])
-					
-					if (valor_empresa + valor_pessoal) > 0:
-						sucesso = registrar_nota_fiscal(mercado, valor_empresa, valor_pessoal, itens_empresa)
-						resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Nota processada! Gastos divididos e salvos na planilha.") if sucesso else "Chefe, li a nota, mas a planilha falhou ao salvar o histórico."
-					else:
-						resposta_para_whatsapp = "Chefe, a foto ficou um pouco embaçada e não consegui ler os valores de forma segura. Pode tentar mandar com mais foco?"
-
-				else:
-					resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", "Anotado!")
-					
-			except json.JSONDecodeError:
-				resposta_para_whatsapp = "Chefe, me confundi aqui. Pode falar de novo de um jeito mais simples?"
-				
-		# --- MODO CLIENTE (VENDAS) ---
-		else:
-			print("👤 Processando pedido de cliente...")
-			
-			estoque_hoje = obter_estoque_atual()
-			saldo_atual_cliente = verificar_saldo_cliente(numero) 
-
-			#Lógica de Status Dinâmico
-			status_manual = ler_status_loja()
-			aviso_rota = ""
-
-			if status_manual == "EM_ROTA":
-				status_loja = "EM_ROTA (A chefe está na rua fazendo entregas)"
-				aviso_rota = "\n⚠️ ATENÇÃO: A CHEFE ESTÁ NA RUA. VOCÊ DEVE AVISAR ISSO AO CLIENTE OBRIGATORIAMENTE."
-			elif status_manual == "FECHADO" or not verificar_loja_aberta():
-				status_loja = f"FECHADO (A confeitaria não está recebendo pedidos no momento)"
-			else:
-				status_loja = "ABERTO"
-			
-			prompt_venda = f"""
-			Data: {info_tempo}
-			{onde_estamos}
-			Nome do contato no WhatsApp: {nome_cliente}.
-			Saldo Devedor Anterior (Fiado): {saldo_atual_cliente}.
-			STATUS DA CONFEITARIA NESTE EXATO MINUTO: {status_loja} {aviso_rota}
-			
-			CARDÁPIO REAL E ÚNICO PARA AGORA (IGNORE O HISTÓRICO):
-			{estoque_hoje}
-			
-			Histórico da conversa:
-			{contexto_completo}
-			
-			REGRAS RIGOROSAS DE VENDAS E LOGÍSTICA:
-			1. PRONTA ENTREGA (Venda Imediata): Somente para a ação "registrar_venda", você deve seguir rigorosamente o CARDÁPIO DE HOJE. Para ENCOMENDAS, ignore essa restrição. NUNCA venda ou ofereça um produto que não está no CARDÁPIO DE HOJE acima.
-			2. Se o cliente pedir algo que não tem no cardápio, diga educadamente que não temos esse item hoje e informe apenas o que temos.
-			3. ESTOQUE VAZIO É ABSOLUTO: Se o CARDÁPIO DE HOJE disser que está vazio ou que não há produtos, avise o cliente que não temos nada no momento. É ESTRITAMENTE PROIBIDO ler o histórico da conversa para tentar listar produtos antigos como se fossem "opções futuras". Apenas responda que o estoque de hoje já foi zerado e peça para aguardar o cardápio do próximo dia.
-			4. Use os preços do cardápio para calcular o "valor_total".
-			5. ENTREGAS (USO INTERNO): Para preencher o campo "local" no JSON, baseie-se APENAS no local onde a conversa está acontecendo. Se o cabeçalho disser que estamos no grupo "Superintendência", o local é "Superintendência". Se for no grupo "APAE", o local é "APAE". Se for em uma conversa no "Privado" ou grupo desconhecido, o local é "Retirada". Nunca use o dia da semana para deduzir o local.
-			6. IMPORTANTE: NUNCA mencione nem cobre o cliente proativamente sobre o "Saldo Devedor Anterior". Só informe se o cliente EXPLICITAMENTE perguntar.
-			7. Cancelamentos/Trocas: Se o cliente quiser cancelar um lanche de AGORA, use "cancelar_pedido". Se ele disser para cancelar uma ENCOMENDA FUTURA, use "cancelar_encomenda".
-			8. ENCOMENDAS: Se o cliente pedir uma "encomenda" ou um item que exija preparo (mesmo que ele queira para mais tarde no próprio dia de HOJE), NÃO recuse. IGNORE o cardápio de pronta entrega, use a ação "conversar" para alinhar os detalhes e, quando tiver tudo, use "registrar_encomenda".
-			9. HORÁRIO E STATUS (ATENÇÃO): 
-			  - Se o STATUS for "FECHADO", não registre vendas ou encomendas.
-			  - Se o STATUS for "EM_ROTA" e for uma Venda Imediata ("registrar_venda"), inclua o aviso da chefe na rua. 
-			  - Se for uma ENCOMENDA ("registrar_encomenda"), NÃO precisa do aviso de "chefe na rua", pois encomendas são para horários futuros e serão aprovadas depois.
-			10. ÁUDIOS E MENSAGENS INCOMPLETAS: Use APENAS a ação "conversar" e responda pedindo para repetir se a mensagem for confusa.
-			11. EXTRATO DE FIADO E CONFERÊNCIA: Se o cliente perguntar o que está devendo, pedir a conta, use IMEDIATAMENTE a ação "consultar_meu_extrato".
-			12. CORREÇÕES E ACRÉSCIMOS: 
-			  - Se o cliente pedir mais itens (ex: "quero também uma rosca"), use "registrar_venda" APENAS para os itens novos. 
-			  - Se o cliente usar palavras de correção como "na verdade", "mudei de ideia", "não é mais X, é Y", ou diminuir a quantidade do que acabou de pedir, você DEVE OBRIGATORIAMENTE retornar a ação "cancelar_pedido" primeiro para limpar o erro. Após o cancelamento ser processado, o cliente pedirá novamente ou você anotará o novo valor em uma mensagem separada. NUNCA registre uma nova venda de um item que o cliente está tentando corrigir sem cancelar a anterior antes.
-			13. FORMATAÇÃO DO MENU: Formate o cardápio como uma lista visual com emojis (ex: 🍰, 🥖).
-			14. PRIVACIDADE DE CONTATO: NUNCA chame o cliente pelo "Nome do contato no WhatsApp" na sua "resposta_amigavel".
-			15. REGISTRO INSTANTÂNEO (BIPE DIRETO): Assim que o cliente pedir um item, use IMEDIATAMENTE a ação "registrar_venda".
-			16. MENSAGENS DE "OK" OU "CONFIRMO": Mensagens de concordância sem itens novos DEVEM usar APENAS a ação "conversar".
-			17. AVISO DE PAGAMENTO: Se o cliente enviar um comprovante ou afirmar que pagou, use IMEDIATAMENTE a ação "informar_pagamento".
-			18. COMPRA JÁ PAGA NA HORA: Se o cliente fizer um pedido e NA MESMA MENSAGEM já disser que pagou (Pix, dinheiro, etc), use a ação "registrar_venda" e adicione no JSON o campo "forma_pagamento": "pago_agora". Se ele não disser nada sobre pagamento, o padrão é "forma_pagamento": "fiado".
-			19. CONVERSA PARALELA EM GRUPOS: Como você está operando em um grupo do WhatsApp, os clientes podem conversar entre si (ex: "Bom dia, vizinha", "Hoje vai chover"). Se a mensagem for CLARAMENTE uma conversa entre terceiros, que não seja um pedido, nem uma dúvida sobre o cardápio, nem direcionada à confeitaria, retorne ESTRITAMENTE a ação "ignorar". O bot ficará em silêncio absoluto para não ser inconveniente.
-			20. MENSAGENS EM GRUPOS (APAE/Superintendência): Se a conversa estiver acontecendo em um grupo, sua "resposta_amigavel" DEVE ser extremamente curta, objetiva e direta. Confirme o pedido e o valor total, mas NUNCA pergunte sobre a forma de pagamento e NUNCA fale sobre "retirar" ou "buscar" (pois a chefe já faz a entrega presencial nesses locais). 
-			Exemplo PERFEITO para grupos: "Anotado! 3 bolos de mandioca, total R$ 24,00."
-
-			Gere o JSON:
-			"""
-			
-			conteudo_ia = [prompt_venda]
-			
-			if media_data and media_mime:
-				conteudo_ia.append({
-					"mime_type": media_mime,
-					"data": media_data
-				})
-				
-			resposta_ia = modelo_cliente.generate_content(conteudo_ia)
-			
-			try:
-				txt_limpo = resposta_ia.text.strip()
-				if txt_limpo.startswith('```json'):
-					txt_limpo = txt_limpo[7:]
-				if txt_limpo.startswith('```'):
-					txt_limpo = txt_limpo[3:]
-				if txt_limpo.endswith('```'):
-					txt_limpo = txt_limpo[:-3]
-					
-				dados_extraidos = json.loads(txt_limpo.strip())
-				
-				acao = dados_extraidos.get("acao")
-				
-				if acao == "registrar_venda":
-					itens_vendidos = dados_extraidos.get("itens_vendidos", [])
-					valor_correto = calcular_total_seguro(itens_vendidos) if itens_vendidos else float(dados_extraidos.get("valor_total", 0))
-					
-					pode_vender = True
-					msg_erro = ""
-					
-					if itens_vendidos:
-						pode_vender, msg_erro = verificar_disponibilidade(itens_vendidos)
-						
-					if not pode_vender:
-						resposta_para_whatsapp = msg_erro
-					else:
-						# --- NOVA LÓGICA DE PAGAMENTO ---
-						forma_pag = dados_extraidos.get("forma_pagamento", "fiado")
-						status_planilha = "Pago ✅" if forma_pag == "pago_agora" else "Pendente ⏳"
-						
-						sucesso_venda = registrar_venda(
-							telefone=numero,
-							nome_cliente=dados_extraidos.get("nome_cliente", nome_cliente),
-							pedido=dados_extraidos.get("pedido", ""),
-							valor=valor_correto, 
-							local=dados_extraidos.get("local", ""),
-							itens_vendidos=itens_vendidos,
-							status_pagamento=status_planilha
-						)
-						
-						# Só joga no Livro Caixa (Aba Clientes) se for fiado!
-						if sucesso_venda and forma_pag == "fiado":
-							atualizar_compra_cliente(numero, dados_extraidos.get("nome_cliente", nome_cliente), valor_correto) 
+						partes = mensagem.split(":", 1)
+						if len(partes) == 2:
+							nome_falso = partes[0].lower().replace("simular ", "").title().strip()
+							mensagem = partes[1].strip()
 							
-						resposta_para_whatsapp = dados_extraidos["resposta_amigavel"] if sucesso_venda else "Tive um probleminha para anotar no sistema, mas já aviso a chefe do seu pedido!"
-						
-						if abs(valor_correto - float(dados_extraidos.get("valor_total", 0))) > 0.1: 
-							resposta_para_whatsapp += f"\n\n*(Correção automática: o valor exato dos itens é R$ {valor_correto:.2f})*"
-                            
-						status_manual = ler_status_loja()
-						if status_manual == "EM_ROTA" and sucesso_venda:
-							itens_texto = dados_extraidos.get("pedido", "itens")
-							notificacao_para_admin = f"⚠️ *CLIENTE NA FILA DE ESPERA* ⚠️\n\n👤 *De:* {nome_cliente} ({numero.split('@')[0]})\n📦 *Pedido:* {itens_texto}\n\nSe você ainda tiver esses itens na cesta, responda o cliente no privado ou no grupo para confirmar a entrega!"
+							if nome_falso.lower() == "admin" or nome_falso.lower() == "chefe":
+								numero = NUMERO_ADMIN
+								nome_cliente = "Chefe (Simulado)"
+								print(f"🎭 [MODO TESTE] Simulando a CHEFE.")
+							else:
+								nome_cliente = nome_falso
+								numero = f"553800000000_{nome_falso.lower().replace(' ', '_')}@c.us" 
+								print(f"🎭 [MODO TESTE] Simulando cliente: {nome_cliente}")
+					except Exception as e:
+						print(f"Erro na camuflagem: {e}")
+				# --- FIM DO MODO CAMUFLAGEM ---
+		
+				chave_historico = f"{chat_id}_{numero}"
+				info_tempo = obter_contexto_data()
+				onde_estamos = f"Estamos conversando no grupo '{nome_grupo}'." if is_group else "Estamos em uma conversa no Privado."
 				
-				elif acao == "cancelar_pedido":
-					sucesso, msg_retorno = cancelar_ultimo_pedido(numero)
-					resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", msg_retorno) if sucesso else msg_retorno
-
-				elif acao == "cancelar_encomenda":
-					sucesso, msg_retorno = cancelar_ultimo_pedido(numero, tipo_alvo="encomenda")
-					resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", msg_retorno) if sucesso else msg_retorno
+				if chave_historico not in historico_conversas:
+					historico_conversas[chave_historico] = []
 					
-				elif acao == "registrar_encomenda":
-					data_entrega = dados_extraidos.get("data_entrega", "A combinar")
-					pedido_texto = dados_extraidos.get("pedido", "")
+				texto_historico = mensagem if mensagem else f"[Mídia enviada: {media_mime}]"
+				
+				historico_conversas[chave_historico].append(f"{nome_cliente}: {texto_historico}")
 					
-					sucesso = solicitar_encomenda(
-						telefone=numero,
-						nome_cliente=dados_extraidos.get("nome_cliente", nome_cliente),
-						pedido=pedido_texto,
-						data_entrega=data_entrega
-					)
+				historico_conversas[chave_historico] = historico_conversas[chave_historico][-20:]
+				salvar_historico() 
+		
+				contexto_completo = "\n".join(historico_conversas[chave_historico][-5:])
+				
+				print(f"\n--- Nova Mensagem de {nome_cliente} ({numero}) ---")
+				print(f"Local: {nome_grupo} | Texto: {mensagem}")
+				
+				resposta_para_whatsapp = ""
+				notificacao_para_admin = ""
+				resposta_privada = ""
+				
+				# --- MODO CHEFE (ADMINISTRADOR) ---
+				if numero == NUMERO_ADMIN or chat_id == ID_GRUPO_ADMIN:
+					print("👑 Processando comando da chefe...")
+					estoque_completo = obter_cardapio_completo()
 					
-					if sucesso:
-						resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Tudo anotado! Como é uma encomenda para {data_entrega}, eu vou passar os detalhes para a chefe avaliar. Ela te chama rapidinho para confirmar o valor e fechar o pedido, tá bom?")
+					prompt_chefe = f"""
+					{info_tempo}
+					ESTOQUE ATUAL NA PLANILHA:
+					{estoque_completo}
+		
+					Histórico da conversa:
+					{contexto_completo}
+					
+					Chefe diz: {mensagem}
+					"""
+		
+					conteudo_ia_chefe = [prompt_chefe]
+					
+					if media_data and media_mime:
+						conteudo_ia_chefe.append({
+							"mime_type": media_mime,
+							"data": media_data
+						})
 						
-						notificacao_para_admin = f"⚠️ *NOVA ENCOMENDA PARA APROVAR* ⚠️\n\n👤 *Cliente:* {nome_cliente}\n📅 *Para:* {data_entrega}\n📝 *Pedido:* {pedido_texto}\n\nPara confirmar, responda aqui mesmo: _'Confirma a encomenda de {nome_cliente} por X reais'_."
-					else:
-						resposta_para_whatsapp = "Tive um probleminha para anotar a encomenda no sistema, mas já vou chamar a chefe para te atender!"
-
-				elif acao == "consultar_meu_extrato":
-					sucesso, extrato = gerar_extrato_fiado(numero, por_telefone=True)
+					resposta_ia = modelo_admin.generate_content(conteudo_ia_chefe)
 					
-					if is_group:
-						resposta_para_whatsapp = "Te enviei o seu extrato no privado!"
-						resposta_privada = f"Oi! Como você pediu lá no grupo, puxei o seu caderninho digital aqui pra gente conferir:\n\n{extrato}"
-					else:
-						resposta_para_whatsapp = f"Claro, peguei aqui o seu caderninho digital!\n\n{extrato}"
-
-				elif acao == "informar_pagamento":
-					resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", "Obrigado! Já enviei o aviso para a chefe conferir o Pix e dar baixa no seu saldo.")
-					
-					notificacao_para_admin = f"💸 *AVISO DE PAGAMENTO* 💸\n\nO cliente *{nome_cliente}* ({numero.split('@')[0]}) acabou de avisar que fez um pagamento/Pix.\n\nPor favor, confira a conta bancária. Se o dinheiro caiu, responda aqui mesmo:\n_'Atualizar pagamento de {nome_cliente} valor X'_"
-
-				elif acao == "ignorar":
-					resposta_para_whatsapp = ""
-					print(f"🔇 IA detectou conversa paralela de {nome_cliente}. Silenciando bot.")
-					
+					try:
+						txt_limpo = resposta_ia.text.strip()
+						if txt_limpo.startswith('```json'):
+							txt_limpo = txt_limpo[7:]
+						if txt_limpo.startswith('```'):
+							txt_limpo = txt_limpo[3:]
+						if txt_limpo.endswith('```'):
+							txt_limpo = txt_limpo[:-3]
+							
+						dados_extraidos = json.loads(txt_limpo.strip())
+						
+						acao = dados_extraidos.get("acao")
+						
+						if acao == "registrar_financa":
+							# Usamos .get() com valores padrão para evitar o KeyError
+							tipo_gasto = dados_extraidos.get("tipo", "Despesa")
+							desc_gasto = dados_extraidos.get("descricao", "Conta")
+							valor_gasto = dados_extraidos.get("valor", 0)
+							aba_destino = dados_extraidos.get("categoria_aba", "Financas_Empresa")
+							data_vencimento = dados_extraidos.get("data_vencimento", "")
+		
+							sucesso = registrar_gasto_admin(
+								tipo=tipo_gasto,
+								descricao=desc_gasto,
+								valor=valor_gasto,
+								categoria_aba=aba_destino
+							)
+							
+							if sucesso:
+								resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Anotado, chefe! Lancei a conta de {desc_gasto} no valor de R$ {valor_gasto}.")
+								
+								# --- NOVA INTEGRAÇÃO: AGENDA PARA CONTAS ---
+								if data_vencimento:
+									sucesso_agenda = criar_evento_agenda(
+										titulo=f"💸 Pagar: {desc_gasto}",
+										data_entrega=data_vencimento,
+										descricao=f"Valor: R$ {valor_gasto}\nTipo: {tipo_gasto}"
+									)
+									if sucesso_agenda:
+										resposta_para_whatsapp += f"\n\n📅 Também já coloquei um lembrete na sua Google Agenda para o dia {data_vencimento}!"
+									else:
+										resposta_para_whatsapp += f"\n\n⚠️ Tentei salvar na Agenda para o dia {data_vencimento}, mas ocorreu um erro."
+							else:
+								resposta_para_whatsapp = "Chefe, entendi o gasto, mas a planilha não aceitou o registro. Verifique se as colunas estão certas!"
+		
+						elif acao == "atualizar_estoque":
+							itens = dados_extraidos.get("itens_estoque", [])
+							sucesso = atualizar_estoque(itens)
+							resposta_para_whatsapp = dados_extraidos["resposta_amigavel"] if sucesso else "Chefe, deu um problema ao salvar os itens no estoque. Tente de novo!"
+		
+						elif acao == "listar_devedores":
+							resposta_para_whatsapp = listar_todos_devedores()
+		
+						elif acao == "atualizar_pagamento":
+							cliente_pagou = dados_extraidos.get("nome_cliente", "")
+							valor_pago = dados_extraidos.get("valor_pago", 0)
+							
+							if cliente_pagou:
+								if valor_pago > 0:
+									sucesso, msg_retorno = registrar_pagamento_fiado(cliente_pagou, valor_pago)
+								else:
+									sucesso, msg_retorno = atualizar_status_pagamento(cliente_pagou)
+									
+								resposta_para_whatsapp = msg_retorno
+							else:
+								resposta_para_whatsapp = "Chefe, não entendi de quem foi o Pix. Pode repetir?"
+		
+						elif acao == "confirmar_encomenda":
+							cliente_alvo = dados_extraidos.get("nome_cliente", "")
+							valor_final = dados_extraidos.get("valor_total", 0)
+							
+							if cliente_alvo and valor_final > 0:
+								sucesso, msg = confirmar_encomenda_admin(cliente_alvo, valor_final)
+								if sucesso:
+									# --- INTEGRAÇÃO COM A AGENDA ---
+									# Aqui pegamos os detalhes do pedido que já estão na planilha
+									sucesso_agenda = criar_evento_agenda(
+										titulo=f"🎂 Encomenda: {cliente_alvo}",
+										data_entrega=dados_extraidos.get("data_entrega", ""), # A IA extrai a data absoluta
+										descricao=f"Valor: R$ {valor_final}\nPedido: {dados_extraidos.get('pedido', '')}"
+									)
+									if sucesso_agenda:
+										resposta_para_whatsapp = msg + "\n\n📅 Também já salvei na sua Google Agenda com um lembrete!"
+									else:
+										resposta_para_whatsapp = msg + "\n\n⚠️ Avisei na planilha, mas tive um erro ao acessar sua Agenda."
+								else:
+									resposta_para_whatsapp = msg
+		
+						elif acao == "consultar_pedidos":
+							sucesso, relatorio = relatorio_pedidos_admin()
+							resposta_para_whatsapp = relatorio
+		
+						elif acao == "consultar_extrato_cliente":
+							cliente_alvo = dados_extraidos.get("nome_cliente", "")
+							if cliente_alvo:
+								sucesso, extrato = gerar_extrato_fiado(cliente_alvo, por_telefone=False)
+								resposta_para_whatsapp = extrato
+							else:
+								resposta_para_whatsapp = "Chefe, de quem você quer ver o extrato? Faltou o nome!"
+		
+						elif acao == "registrar_venda_manual":
+							cliente_alvo = dados_extraidos.get("nome_cliente", "")
+							pedido_texto = dados_extraidos.get("pedido", "")
+							itens = dados_extraidos.get("itens_vendidos", [])
+							
+							valor_venda = calcular_total_seguro(itens) if itens else float(dados_extraidos.get("valor_total", 0))
+							
+							if cliente_alvo and valor_venda > 0:
+								status_busca, resultado_busca = buscar_telefone_na_agenda(cliente_alvo)
+								
+								if status_busca == "duvida":
+									resposta_para_whatsapp = f"Chefe, segurei a venda porque achei várias pessoas com esse nome: *{resultado_busca}*.\n\nPode mandar o pedido de novo falando o nome inteiro da pessoa certa?"
+								else:
+									tel_cliente = resultado_busca
+									
+									sucesso_venda = registrar_venda(
+										telefone=tel_cliente,
+										nome_cliente=cliente_alvo,
+										pedido=pedido_texto,
+										valor=valor_venda, 
+										local="Balcão/Presencial",
+										itens_vendidos=itens
+									)
+									
+									if sucesso_venda:
+										atualizar_compra_cliente(tel_cliente, cliente_alvo, valor_venda)
+										resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Prontinho, chefe! Venda lançada para {cliente_alvo} no valor de R$ {valor_venda:.2f}.")
+									else:
+										resposta_para_whatsapp = "Chefe, a planilha deu um erro e recusou a gravação. Tente de novo!"
+							else:
+								resposta_para_whatsapp = "Chefe, não entendi direito o nome do cliente ou o valor final. Pode repetir?"
+		
+						elif acao == "cancelar_venda_cliente":
+							cliente_alvo = dados_extraidos.get("nome_cliente", "")
+							if cliente_alvo:
+								sucesso, msg_retorno = cancelar_pedido_admin(cliente_alvo)
+								resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", msg_retorno) if sucesso else msg_retorno
+							else:
+								resposta_para_whatsapp = "Chefe, de quem você quer cancelar a venda? Faltou o nome!"
+		
+						elif acao == "alterar_status_loja":
+							novo_status = dados_extraidos.get("novo_status", "ABERTO")
+							salvar_status_loja(novo_status)
+							resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Feito, chefe! A confeitaria agora está no modo: {novo_status}")
+		
+						elif acao == "gerar_dre_mensal":
+							mes_ref = dados_extraidos.get("mes_referencia")
+							sucesso, dre = gerar_relatorio_financeiro(mes_ref)
+							resposta_para_whatsapp = dre
+		
+						elif acao == "remover_evento_agenda":
+							titulo_alvo = dados_extraidos.get("titulo", "")
+							data_alvo = dados_extraidos.get("data_vencimento", "")
+							
+							if titulo_alvo and data_alvo:
+								sucesso, msg = deletar_evento_agenda(titulo_alvo, data_alvo)
+								resposta_para_whatsapp = msg
+							else:
+								resposta_para_whatsapp = "Chefe, preciso que você me fale o nome do compromisso e a data para eu conseguir apagar da agenda."
+		
+						elif acao == "agendar_compromisso":
+							eventos_lista = dados_extraidos.get("eventos", [])
+							if not eventos_lista:
+								# Fallback para o formato antigo de um único evento
+								eventos_lista = [dados_extraidos]
+							
+							agendados = 0
+							for ev in eventos_lista:
+								titulo = ev.get("titulo", "Compromisso")
+								data = ev.get("data_vencimento")
+								hora = ev.get("hora_inicio")
+								if data and hora:
+									sucesso = criar_evento_agenda(titulo, data, "Agendado via Assistente", hora)
+									if sucesso: agendados += 1
+							
+							if agendados > 0:
+								resposta_para_whatsapp = f"Pronto! Agendei os {agendados} horários na sua agenda para não esquecer."
+							else:
+								resposta_para_whatsapp = "Não consegui marcar na agenda. Verifique se me passou as datas certas."
+		
+						elif acao == "anotar_lembrete_geral":
+							item_tarefa = dados_extraidos.get("tarefa", "")
+							if item_tarefa:
+								sucesso = registrar_tarefa_lista(item_tarefa)
+								resposta_para_whatsapp = f"Anotado na sua lista de tarefas, chefe: '{item_tarefa}'!" if sucesso else "Erro ao salvar na lista."
+		
+						elif acao == "importar_fiados_lote":
+							lista_fiados = dados_extraidos.get("lista_fiados", [])
+							
+							if not lista_fiados:
+								resposta_para_whatsapp = "Chefe, olhei a foto mas não consegui identificar nenhum nome ou valor claro. Pode tentar tirar uma foto mais de perto ou com mais luz?"
+							else:
+								resultados = []
+								for fiado in lista_fiados:
+									nome_alvo = fiado.get("nome_cliente", "")
+									try:
+										valor_bruto = fiado.get("valor_total", 0)
+										# Se a IA já enviou um número puro, apenas usamos
+										if isinstance(valor_bruto, (int, float)):
+											valor_divida = float(valor_bruto)
+										else:
+											# Se a IA enviou como texto (ex: "R$ 27,00"), limpamos com segurança
+											v_str = str(valor_bruto).replace("R$", "").strip()
+											if "," in v_str:
+												v_str = v_str.replace(".", "").replace(",", ".")
+											valor_divida = float(v_str)
+									except Exception as e:
+										print(f"Erro na conversão do valor: {e}")
+										valor_divida = 0.0
+										
+									if nome_alvo and valor_divida > 0:
+										# Procura o contato do caderno na agenda do celular
+										status_busca, resultado_busca = buscar_telefone_na_agenda(nome_alvo)
+										
+										if status_busca == "sucesso":
+											telefone_real = resultado_busca
+											# Lança como se fosse uma venda fiada antiga
+											sucesso_venda = registrar_venda(
+												telefone=telefone_real,
+												nome_cliente=nome_alvo,
+												pedido="Importação de caderno antigo (Foto)",
+												valor=valor_divida,
+												local="Migração de Dados",
+												itens_vendidos=[],
+												status_pagamento="Pendente ⏳"
+											)
+											if sucesso_venda:
+												atualizar_compra_cliente(telefone_real, nome_alvo, valor_divida)
+												resultados.append(f"✅ *{nome_alvo}*: Adicionado (R$ {valor_divida:.2f})")
+											else:
+												resultados.append(f"❌ *{nome_alvo}*: Falha ao salvar na planilha.")
+										elif status_busca == "duvida":
+											resultados.append(f"⚠️ *{nome_alvo}*: Achei vários contatos com esse nome. Lance manualmente.")
+										else:
+											resultados.append(f"❌ *{nome_alvo}*: Não encontrei esse nome na agenda do celular.")
+											
+								resposta_para_whatsapp = "📸 *LEITURA DO CADERNO CONCLUÍDA:*\n\n" + "\n".join(resultados)
+								resposta_para_whatsapp += "\n\nSe alguém ficou de fora, verifique se o nome no papel está escrito igual ao nome salvo nos contatos!"
+		
+						elif acao == "analisar_compra_pessoal":
+							item = dados_extraidos.get("item_desejado", "compra")
+							try:
+								valor = float(dados_extraidos.get("valor_item", 0))
+							except:
+								valor = 0.0
+								
+							if valor > 0:
+								sucesso, msg = calcular_preco_em_doces(item, valor)
+								resposta_para_whatsapp = msg
+							else:
+								resposta_para_whatsapp = "Chefe, não entendi o valor exato. Quanto custa isso que você quer comprar?"
+		
+						elif acao == "processar_nota_fiscal":
+							mercado = dados_extraidos.get("supermercado", "Supermercado")
+							valor_empresa = float(dados_extraidos.get("valor_empresa", 0))
+							valor_pessoal = float(dados_extraidos.get("valor_pessoal", 0))
+							itens_empresa = dados_extraidos.get("itens_empresa", [])
+							
+							if (valor_empresa + valor_pessoal) > 0:
+								sucesso = registrar_nota_fiscal(mercado, valor_empresa, valor_pessoal, itens_empresa)
+								resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Nota processada! Gastos divididos e salvos na planilha.") if sucesso else "Chefe, li a nota, mas a planilha falhou ao salvar o histórico."
+							else:
+								resposta_para_whatsapp = "Chefe, a foto ficou um pouco embaçada e não consegui ler os valores de forma segura. Pode tentar mandar com mais foco?"
+		
+						else:
+							resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", "Anotado!")
+							
+					except json.JSONDecodeError:
+						resposta_para_whatsapp = "Chefe, me confundi aqui. Pode falar de novo de um jeito mais simples?"
+						
+				# --- MODO CLIENTE (VENDAS) ---
 				else:
-					resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", "Posso te ajudar com o seu pedido?")
+					print("👤 Processando pedido de cliente...")
 					
-			except json.JSONDecodeError as e:
-				print(f"❌ Erro crítico de JSON! A IA respondeu: {resposta_ia.text}")
-				resposta_para_whatsapp = "Desculpe, não entendi direito. Pode repetir seu pedido?"
+					estoque_hoje = obter_estoque_atual()
+					saldo_atual_cliente = verificar_saldo_cliente(numero) 
 		
-		if resposta_para_whatsapp:
-			historico_conversas[chave_historico].append(f"Assistente: {resposta_para_whatsapp}")
-			salvar_historico()
-			enviar_whatsapp(chat_id, resposta_para_whatsapp)
-			
-		if resposta_privada:
-			enviar_whatsapp(numero, resposta_privada)
-			
-		if notificacao_para_admin and ID_GRUPO_ADMIN:
-			enviar_whatsapp(ID_GRUPO_ADMIN, notificacao_para_admin)
-			
-		print(f"Mensagem enviada/processada: {resposta_para_whatsapp}")
-		return jsonify({
-			"status": "processado", 
-			"resposta": resposta_para_whatsapp, 
-			"resposta_privada": resposta_privada,
-			"notificacao_admin": notificacao_para_admin
-		}), 200
+					#Lógica de Status Dinâmico
+					status_manual = ler_status_loja()
+					aviso_rota = ""
 		
+					if status_manual == "EM_ROTA":
+						status_loja = "EM_ROTA (A chefe está na rua fazendo entregas)"
+						aviso_rota = "\n⚠️ ATENÇÃO: A CHEFE ESTÁ NA RUA. VOCÊ DEVE AVISAR ISSO AO CLIENTE OBRIGATORIAMENTE."
+					elif status_manual == "FECHADO" or not verificar_loja_aberta():
+						status_loja = f"FECHADO (A confeitaria não está recebendo pedidos no momento)"
+					else:
+						status_loja = "ABERTO"
+					
+					prompt_venda = f"""
+					Data: {info_tempo}
+					{onde_estamos}
+					Nome do contato no WhatsApp: {nome_cliente}.
+					Saldo Devedor Anterior (Fiado): {saldo_atual_cliente}.
+					STATUS DA CONFEITARIA NESTE EXATO MINUTO: {status_loja} {aviso_rota}
+					
+					CARDÁPIO REAL E ÚNICO PARA AGORA (IGNORE O HISTÓRICO):
+					{estoque_hoje}
+					
+					Histórico da conversa:
+					{contexto_completo}
+					
+					REGRAS RIGOROSAS DE VENDAS E LOGÍSTICA:
+					1. PRONTA ENTREGA (Venda Imediata): Somente para a ação "registrar_venda", você deve seguir rigorosamente o CARDÁPIO DE HOJE. Para ENCOMENDAS, ignore essa restrição. NUNCA venda ou ofereça um produto que não está no CARDÁPIO DE HOJE acima.
+					2. Se o cliente pedir algo que não tem no cardápio, diga educadamente que não temos esse item hoje e informe apenas o que temos.
+					3. ESTOQUE VAZIO É ABSOLUTO: Se o CARDÁPIO DE HOJE disser que está vazio ou que não há produtos, avise o cliente que não temos nada no momento. É ESTRITAMENTE PROIBIDO ler o histórico da conversa para tentar listar produtos antigos como se fossem "opções futuras". Apenas responda que o estoque de hoje já foi zerado e peça para aguardar o cardápio do próximo dia.
+					4. Use os preços do cardápio para calcular o "valor_total".
+					5. ENTREGAS (USO INTERNO): Para preencher o campo "local" no JSON, baseie-se APENAS no local onde a conversa está acontecendo. Se o cabeçalho disser que estamos no grupo "Superintendência", o local é "Superintendência". Se for no grupo "APAE", o local é "APAE". Se for em uma conversa no "Privado" ou grupo desconhecido, o local é "Retirada". Nunca use o dia da semana para deduzir o local.
+					6. IMPORTANTE: NUNCA mencione nem cobre o cliente proativamente sobre o "Saldo Devedor Anterior". Só informe se o cliente EXPLICITAMENTE perguntar.
+					7. Cancelamentos/Trocas: Se o cliente quiser cancelar um lanche de AGORA, use "cancelar_pedido". Se ele disser para cancelar uma ENCOMENDA FUTURA, use "cancelar_encomenda".
+					8. ENCOMENDAS: Se o cliente pedir uma "encomenda" ou um item que exija preparo (mesmo que ele queira para mais tarde no próprio dia de HOJE), NÃO recuse. IGNORE o cardápio de pronta entrega, use a ação "conversar" para alinhar os detalhes e, quando tiver tudo, use "registrar_encomenda".
+					9. HORÁRIO E STATUS (ATENÇÃO): 
+					  - Se o STATUS for "FECHADO", não registre vendas ou encomendas.
+					  - Se o STATUS for "EM_ROTA" e for uma Venda Imediata ("registrar_venda"), inclua o aviso da chefe na rua. 
+					  - Se for uma ENCOMENDA ("registrar_encomenda"), NÃO precisa do aviso de "chefe na rua", pois encomendas são para horários futuros e serão aprovadas depois.
+					10. ÁUDIOS E MENSAGENS INCOMPLETAS: Use APENAS a ação "conversar" e responda pedindo para repetir se a mensagem for confusa.
+					11. EXTRATO DE FIADO E CONFERÊNCIA: Se o cliente perguntar o que está devendo, pedir a conta, use IMEDIATAMENTE a ação "consultar_meu_extrato".
+					12. CORREÇÕES E ACRÉSCIMOS: 
+					  - Se o cliente pedir mais itens (ex: "quero também uma rosca"), use "registrar_venda" APENAS para os itens novos. 
+					  - Se o cliente usar palavras de correção como "na verdade", "mudei de ideia", "não é mais X, é Y", ou diminuir a quantidade do que acabou de pedir, você DEVE OBRIGATORIAMENTE retornar a ação "cancelar_pedido" primeiro para limpar o erro. Após o cancelamento ser processado, o cliente pedirá novamente ou você anotará o novo valor em uma mensagem separada. NUNCA registre uma nova venda de um item que o cliente está tentando corrigir sem cancelar a anterior antes.
+					13. FORMATAÇÃO DO MENU: Formate o cardápio como uma lista visual com emojis (ex: 🍰, 🥖).
+					14. PRIVACIDADE DE CONTATO: NUNCA chame o cliente pelo "Nome do contato no WhatsApp" na sua "resposta_amigavel".
+					15. REGISTRO INSTANTÂNEO (BIPE DIRETO): Assim que o cliente pedir um item, use IMEDIATAMENTE a ação "registrar_venda".
+					16. MENSAGENS DE "OK" OU "CONFIRMO": Mensagens de concordância sem itens novos DEVEM usar APENAS a ação "conversar".
+					17. AVISO DE PAGAMENTO: Se o cliente enviar um comprovante ou afirmar que pagou, use IMEDIATAMENTE a ação "informar_pagamento".
+					18. COMPRA JÁ PAGA NA HORA: Se o cliente fizer um pedido e NA MESMA MENSAGEM já disser que pagou (Pix, dinheiro, etc), use a ação "registrar_venda" e adicione no JSON o campo "forma_pagamento": "pago_agora". Se ele não disser nada sobre pagamento, o padrão é "forma_pagamento": "fiado".
+					19. CONVERSA PARALELA EM GRUPOS: Como você está operando em um grupo do WhatsApp, os clientes podem conversar entre si (ex: "Bom dia, vizinha", "Hoje vai chover"). Se a mensagem for CLARAMENTE uma conversa entre terceiros, que não seja um pedido, nem uma dúvida sobre o cardápio, nem direcionada à confeitaria, retorne ESTRITAMENTE a ação "ignorar". O bot ficará em silêncio absoluto para não ser inconveniente.
+					20. MENSAGENS EM GRUPOS (APAE/Superintendência): Se a conversa estiver acontecendo em um grupo, sua "resposta_amigavel" DEVE ser extremamente curta, objetiva e direta. Confirme o pedido e o valor total, mas NUNCA pergunte sobre a forma de pagamento e NUNCA fale sobre "retirar" ou "buscar" (pois a chefe já faz a entrega presencial nesses locais). 
+					Exemplo PERFEITO para grupos: "Anotado! 3 bolos de mandioca, total R$ 24,00."
+		
+					Gere o JSON:
+					"""
+					
+					conteudo_ia = [prompt_venda]
+					
+					if media_data and media_mime:
+						conteudo_ia.append({
+							"mime_type": media_mime,
+							"data": media_data
+						})
+						
+					resposta_ia = modelo_cliente.generate_content(conteudo_ia)
+					
+					try:
+						txt_limpo = resposta_ia.text.strip()
+						if txt_limpo.startswith('```json'):
+							txt_limpo = txt_limpo[7:]
+						if txt_limpo.startswith('```'):
+							txt_limpo = txt_limpo[3:]
+						if txt_limpo.endswith('```'):
+							txt_limpo = txt_limpo[:-3]
+							
+						dados_extraidos = json.loads(txt_limpo.strip())
+						
+						acao = dados_extraidos.get("acao")
+						
+						if acao == "registrar_venda":
+							itens_vendidos = dados_extraidos.get("itens_vendidos", [])
+							valor_correto = calcular_total_seguro(itens_vendidos) if itens_vendidos else float(dados_extraidos.get("valor_total", 0))
+							
+							pode_vender = True
+							msg_erro = ""
+							
+							if itens_vendidos:
+								pode_vender, msg_erro = verificar_disponibilidade(itens_vendidos)
+								
+							if not pode_vender:
+								resposta_para_whatsapp = msg_erro
+							else:
+								# --- NOVA LÓGICA DE PAGAMENTO ---
+								forma_pag = dados_extraidos.get("forma_pagamento", "fiado")
+								status_planilha = "Pago ✅" if forma_pag == "pago_agora" else "Pendente ⏳"
+								
+								sucesso_venda = registrar_venda(
+									telefone=numero,
+									nome_cliente=dados_extraidos.get("nome_cliente", nome_cliente),
+									pedido=dados_extraidos.get("pedido", ""),
+									valor=valor_correto, 
+									local=dados_extraidos.get("local", ""),
+									itens_vendidos=itens_vendidos,
+									status_pagamento=status_planilha
+								)
+								
+								# Só joga no Livro Caixa (Aba Clientes) se for fiado!
+								if sucesso_venda and forma_pag == "fiado":
+									atualizar_compra_cliente(numero, dados_extraidos.get("nome_cliente", nome_cliente), valor_correto) 
+									
+								resposta_para_whatsapp = dados_extraidos["resposta_amigavel"] if sucesso_venda else "Tive um probleminha para anotar no sistema, mas já aviso a chefe do seu pedido!"
+								
+								if abs(valor_correto - float(dados_extraidos.get("valor_total", 0))) > 0.1: 
+									resposta_para_whatsapp += f"\n\n*(Correção automática: o valor exato dos itens é R$ {valor_correto:.2f})*"
+		                            
+								status_manual = ler_status_loja()
+								if status_manual == "EM_ROTA" and sucesso_venda:
+									itens_texto = dados_extraidos.get("pedido", "itens")
+									notificacao_para_admin = f"⚠️ *CLIENTE NA FILA DE ESPERA* ⚠️\n\n👤 *De:* {nome_cliente} ({numero.split('@')[0]})\n📦 *Pedido:* {itens_texto}\n\nSe você ainda tiver esses itens na cesta, responda o cliente no privado ou no grupo para confirmar a entrega!"
+						
+						elif acao == "cancelar_pedido":
+							sucesso, msg_retorno = cancelar_ultimo_pedido(numero)
+							resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", msg_retorno) if sucesso else msg_retorno
+		
+						elif acao == "cancelar_encomenda":
+							sucesso, msg_retorno = cancelar_ultimo_pedido(numero, tipo_alvo="encomenda")
+							resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", msg_retorno) if sucesso else msg_retorno
+							
+						elif acao == "registrar_encomenda":
+							data_entrega = dados_extraidos.get("data_entrega", "A combinar")
+							pedido_texto = dados_extraidos.get("pedido", "")
+							
+							sucesso = solicitar_encomenda(
+								telefone=numero,
+								nome_cliente=dados_extraidos.get("nome_cliente", nome_cliente),
+								pedido=pedido_texto,
+								data_entrega=data_entrega
+							)
+							
+							if sucesso:
+								resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", f"Tudo anotado! Como é uma encomenda para {data_entrega}, eu vou passar os detalhes para a chefe avaliar. Ela te chama rapidinho para confirmar o valor e fechar o pedido, tá bom?")
+								
+								notificacao_para_admin = f"⚠️ *NOVA ENCOMENDA PARA APROVAR* ⚠️\n\n👤 *Cliente:* {nome_cliente}\n📅 *Para:* {data_entrega}\n📝 *Pedido:* {pedido_texto}\n\nPara confirmar, responda aqui mesmo: _'Confirma a encomenda de {nome_cliente} por X reais'_."
+							else:
+								resposta_para_whatsapp = "Tive um probleminha para anotar a encomenda no sistema, mas já vou chamar a chefe para te atender!"
+		
+						elif acao == "consultar_meu_extrato":
+							sucesso, extrato = gerar_extrato_fiado(numero, por_telefone=True)
+							
+							if is_group:
+								resposta_para_whatsapp = "Te enviei o seu extrato no privado!"
+								resposta_privada = f"Oi! Como você pediu lá no grupo, puxei o seu caderninho digital aqui pra gente conferir:\n\n{extrato}"
+							else:
+								resposta_para_whatsapp = f"Claro, peguei aqui o seu caderninho digital!\n\n{extrato}"
+		
+						elif acao == "informar_pagamento":
+							resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", "Obrigado! Já enviei o aviso para a chefe conferir o Pix e dar baixa no seu saldo.")
+							
+							notificacao_para_admin = f"💸 *AVISO DE PAGAMENTO* 💸\n\nO cliente *{nome_cliente}* ({numero.split('@')[0]}) acabou de avisar que fez um pagamento/Pix.\n\nPor favor, confira a conta bancária. Se o dinheiro caiu, responda aqui mesmo:\n_'Atualizar pagamento de {nome_cliente} valor X'_"
+		
+						elif acao == "ignorar":
+							resposta_para_whatsapp = ""
+							print(f"🔇 IA detectou conversa paralela de {nome_cliente}. Silenciando bot.")
+							
+						else:
+							resposta_para_whatsapp = dados_extraidos.get("resposta_amigavel", "Posso te ajudar com o seu pedido?")
+							
+					except json.JSONDecodeError as e:
+						print(f"❌ Erro crítico de JSON! A IA respondeu: {resposta_ia.text}")
+						resposta_para_whatsapp = "Desculpe, não entendi direito. Pode repetir seu pedido?"
+				
+				if resposta_para_whatsapp:
+					historico_conversas[chave_historico].append(f"Assistente: {resposta_para_whatsapp}")
+					salvar_historico()
+					enviar_whatsapp(chat_id, resposta_para_whatsapp)
+					
+				if resposta_privada:
+					enviar_whatsapp(numero, resposta_privada)
+					
+				if notificacao_para_admin and ID_GRUPO_ADMIN:
+					enviar_whatsapp(ID_GRUPO_ADMIN, notificacao_para_admin)
+					
+				print(f"Mensagem enviada/processada: {resposta_para_whatsapp}")
+				return True
+			except Exception as e:
+				import traceback
+				print(f"Erro no processamento em background: {e}", flush=True)
+				traceback.print_exc()
+
+		threading.Thread(target=background_task, args=(dados_completos, dados, key)).start()
+		return jsonify({"status": "recebido"}), 200
+				
 	except Exception as e:
 		import traceback
 		print(f"Erro no webhook: {e}", flush=True)
