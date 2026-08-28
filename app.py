@@ -14,10 +14,14 @@ import requests
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
+from collections import deque
 
 import database
 
 app = Flask(__name__)
+
+# Cache para deduplicação de mensagens do WhatsApp
+MENSAGENS_PROCESSADAS = deque(maxlen=200)
 
 load_dotenv()
 
@@ -409,7 +413,6 @@ def registrar_nota_fiscal(supermercado, valor_empresa, valor_pessoal, itens_empr
 def webhook(subpath=None):
 	try:
 		dados_completos = request.json
-		print(f"\n--- NOVO WEBHOOK ---", flush=True)
 		
 		if not dados_completos:
 			return jsonify({"erro": "Dados inválidos"}), 400
@@ -430,6 +433,13 @@ def webhook(subpath=None):
 		# Ignora mensagens enviadas pelo próprio bot/instância
 		if key.get('fromMe', False):
 			return jsonify({"status": "ignorado_from_me"}), 200
+			
+		# Deduplicação inteligente de mensagens
+		msg_id = key.get('id', '')
+		if msg_id:
+			if msg_id in MENSAGENS_PROCESSADAS:
+				return jsonify({"status": "ignorado_duplicado"}), 200
+			MENSAGENS_PROCESSADAS.append(msg_id)
 			
 		import threading
 		def background_task(dados_completos, dados, key):
