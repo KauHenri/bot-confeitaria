@@ -1039,6 +1039,10 @@ def relatorio_semanal():
     return jsonify({"mensagem": relatorio})
 
 
+@app.route('/ping', methods=['GET'])
+def ping():
+    return jsonify({"status": "online", "message": "Bot ativo"}), 200
+
 @app.route('/estoque_automatico', methods=['GET'])
 def estoque_automatico():
 	"""Rota para o Node.js buscar o texto do cardápio."""
