@@ -409,11 +409,20 @@ def registrar_nota_fiscal(supermercado, valor_empresa, valor_pessoal, itens_empr
 def webhook(subpath=None):
 	try:
 		dados_completos = request.json
+		print(f"\n--- NOVO WEBHOOK ---", flush=True)
+		import sys
+		sys.stdout.flush()
 		
 		if not dados_completos:
 			return jsonify({"erro": "Dados inválidos"}), 400
 			
 		dados = dados_completos.get('data', dados_completos)
+		if isinstance(dados, list):
+			if len(dados) > 0:
+				dados = dados[0]
+			else:
+				return jsonify({"status": "empty"}), 200
+				
 		key = dados.get('key', {})
 		
 		# Ignora mensagens enviadas pelo próprio bot/instância
@@ -1000,7 +1009,9 @@ def webhook(subpath=None):
 		}), 200
 		
 	except Exception as e:
-		print(f"Erro no webhook: {e}")
+		import traceback
+		print(f"Erro no webhook: {e}", flush=True)
+		traceback.print_exc()
 		return jsonify({"erro": "Erro interno"}), 500
 
 @app.route('/briefing_matinal', methods=['GET'])
