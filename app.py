@@ -405,7 +405,8 @@ def registrar_nota_fiscal(supermercado, valor_empresa, valor_pessoal, itens_empr
     return database.registrar_nota_fiscal_db(supermercado, valor_empresa, valor_pessoal, itens_empresa)
 
 @app.route('/webhook', methods=['POST'])
-def receber_mensagem():
+@app.route('/webhook/<path:subpath>', methods=['POST'])
+def webhook(subpath=None):
 	try:
 		dados_completos = request.json
 		
