@@ -410,7 +410,8 @@ def webhook(subpath=None):
 	try:
 		dados_completos = request.json
 		print(f"\n--- NOVO WEBHOOK ---", flush=True)
-		import sys
+		import json, sys
+		print(json.dumps(dados_completos, indent=2), flush=True)
 		sys.stdout.flush()
 		
 		if not dados_completos:
