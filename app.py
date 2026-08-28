@@ -6,11 +6,15 @@ import time
 from threading import RLock
 from flask import Flask, request, jsonify
 import google.generativeai as genai
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
 from unidecode import unidecode
+import requests
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+import pytz
+
+import database
 
 app = Flask(__name__)
 
@@ -56,8 +60,37 @@ def obter_contexto_data():
 
 # --- CONFIGURAÇÕES DE TESTE E ADMIN ---
 NUMERO_TESTE = os.getenv("NUMERO_TESTE")
-NUMERO_ADMIN = "000"
-ID_GRUPO_ADMIN = os.getenv("ID_GRUPO_ADMIN") 
+NUMERO_ADMIN = os.getenv("NUMERO_ADMIN")
+ID_GRUPO_ADMIN = os.getenv("ID_GRUPO_ADMIN")
+
+# Configurações Evolution API
+EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL")
+EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY")
+EVOLUTION_INSTANCE_NAME = os.getenv("EVOLUTION_INSTANCE_NAME", "confeitaria")
+ID_GRUPO_SUPERINTENDENCIA = os.getenv("ID_GRUPO_SUPERINTENDENCIA")
+ID_GRUPO_APAE = os.getenv("ID_GRUPO_APAE")
+
+def enviar_whatsapp(numero, texto):
+    if not EVOLUTION_API_URL or not EVOLUTION_API_KEY or not texto:
+        return False
+    try:
+        url = f"{EVOLUTION_API_URL.rstrip('/')}/message/sendText/{EVOLUTION_INSTANCE_NAME}"
+        headers = {
+            "apikey": EVOLUTION_API_KEY,
+            "Content-Type": "application/json"
+        }
+        # Limpa o número para o padrão esperado pela Evolution
+        destinatario = numero.replace('@s.whatsapp.net', '').replace('@c.us', '') if not numero.endswith('@g.us') else numero
+        payload = {
+            "number": destinatario,
+            "text": texto
+        }
+        r = requests.post(url, json=payload, headers=headers, timeout=10)
+        return r.status_code in [200, 201]
+    except Exception as e:
+        print(f"❌ Erro ao enviar mensagem pelo Evolution API: {e}")
+        return False
+ 
 
 HORA_ABRE = 8
 HORA_FECHA = 18
@@ -168,21 +201,7 @@ modelo_admin = genai.GenerativeModel(
 	"""
 )
 
-def conectar_planilha():
-	escopos = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/calendar']
-	try:
-		credenciais = ServiceAccountCredentials.from_json_keyfile_name('credenciais.json', escopos)
-		cliente = gspread.authorize(credenciais)
-		planilha = cliente.open_by_key(PLANILHA_ID)
-		print("✅ Conectado ao Google Sheets com sucesso!")
-		return planilha
-	except Exception as e:
-		print(f"❌ Erro ao conectar na planilha: {e}")
-		return None
 
-planilha_db = conectar_planilha()
-trava_planilha = RLock()
-# --- SISTEMA DE CACHE DE PLANILHA (Aceleração) ---
 cache_planilha = {
 	"estoque": {"dados": "", "tempo": 0},
 	"saldos": {}
@@ -190,442 +209,46 @@ cache_planilha = {
 TEMPO_CACHE = 30 # A memória dura 30 segundos
 
 def obter_estoque_atual():
-	global cache_planilha
-	agora = time.time()
-	
-	# Se a informação tem menos de 30 segundos, pega direto da memória RAM (Instantâneo!)
-	if (agora - cache_planilha["estoque"]["tempo"]) < TEMPO_CACHE:
-		return cache_planilha["estoque"]["dados"]
-		
-	try:
-		aba_estoque = planilha_db.worksheet("Estoque")
-		registros = aba_estoque.get_all_records()
-		
-		if not registros:
-			return "O cardápio está vazio no sistema."
-			
-		texto_estoque = "Lista de produtos disponíveis para hoje:\n"
-		tem_produto = False
-		
-		for item in registros:
-			nome = item.get('Item', '')
-			preco_bruto = item.get('Preco_Unitario', 0)
-			disponivel = str(item.get('Disponivel', '')).strip().lower()
-			
-			if disponivel in ['sim', '1', 'true', 'ok', 'tem']:
-				try:
-					if isinstance(preco_bruto, (int, float)):
-						preco_num = float(preco_bruto)
-					else:
-						p_str = str(preco_bruto).replace("R$", "").strip()
-						if "," in p_str:
-							p_str = p_str.replace(".", "").replace(",", ".")
-						preco_num = float(p_str)
-					preco_fmt = f"{preco_num:.2f}".replace('.', ',')
-				except Exception:
-					preco_fmt = str(preco_bruto)
-					
-				texto_estoque += f"- {nome} (R$ {preco_fmt})\n"
-				tem_produto = True
-				
-		if not tem_produto:
-			resultado = "Não temos nenhum produto pronto no momento."
-		else:
-			resultado = texto_estoque
-			
-		# Salva a resposta no Cache para a próxima mensagem
-		cache_planilha["estoque"]["dados"] = resultado
-		cache_planilha["estoque"]["tempo"] = agora
-		return resultado
-		
-	except Exception as e:
-		print(f"Erro ao ler estoque: {e}")
-		return "Erro ao verificar o cardápio."
+    return database.obter_estoque_atual_db()
 
 def obter_cardapio_completo():
-	try:
-		aba_estoque = planilha_db.worksheet("Estoque")
-		registros = aba_estoque.get_all_records()
-		
-		if not registros:
-			return "O cardápio está vazio no sistema."
-			
-		texto_estoque = "CARDÁPIO COMPLETO (Todos os itens cadastrados no banco):\n"
-		
-		for item in registros:
-			nome = item.get('Item', '')
-			disp = item.get('Disponivel', '')
-			texto_estoque += f"- {nome} (Status atual na planilha: {disp})\n"
-			
-		return texto_estoque
-	except Exception as e:
-		return "Erro ao ler o cardápio completo."
+    return database.obter_cardapio_completo_db()
 
 def verificar_disponibilidade(itens_pedidos):
-	try:
-		aba_estoque = planilha_db.worksheet("Estoque")
-		registros = aba_estoque.get_all_records()
-		
-		itens_disponiveis = []
-		for linha in registros:
-			nome = str(linha.get("Item", "")).strip().lower()
-			disp = str(linha.get("Disponivel", "")).strip().lower()
-			if disp in ['sim', '1', 'true', 'ok', 'tem']:
-				itens_disponiveis.append(nome)
-				
-		for pedido in itens_pedidos:
-			nome_pedido = str(pedido.get("item", "")).strip().lower()
-			encontrou = False
-			for item_disp in itens_disponiveis:
-				if nome_pedido in item_disp or item_disp in nome_pedido:
-					encontrou = True
-					break
-					
-			if not encontrou:
-				nome_bonito = str(pedido.get("item", "")).title()
-				return False, f"Poxa, o item '{nome_bonito}' não está disponível no cardápio de hoje."
-				
-		return True, ""
-	except Exception as e:
-		return False, "Deu um probleminha ao conferir o cardápio."
+    return database.verificar_disponibilidade_db(itens_pedidos)
 
 def atualizar_estoque(itens):
-	with trava_planilha:
-		try:
-			aba_estoque = planilha_db.worksheet("Estoque")
-			registros = aba_estoque.get_all_records()
-			
-			for novo_item in itens:
-				nome = novo_item.get("item", "")
-				disponivel = "Sim" if novo_item.get("disponivel", True) else "Não"
-				preco = novo_item.get("preco", 0)
-				
-				linha_existente = None
-				for i, linha in enumerate(registros):
-					if str(linha.get("Item", "")).lower() == str(nome).lower():
-						linha_existente = i + 2
-						break
-				
-				if linha_existente:
-					aba_estoque.update_cell(linha_existente, 2, disponivel)
-					if preco > 0:
-						aba_estoque.update_cell(linha_existente, 3, preco)
-				else:
-					aba_estoque.append_row([nome, disponivel, preco])
-					
-			return True
-		except Exception as e:
-			print(f"❌ Erro ao atualizar estoque: {e}")
-			return False
+    return database.atualizar_estoque_db(itens)
 
 def listar_todos_devedores():
-	with trava_planilha:
-		try:
-			aba_clientes = planilha_db.worksheet("Clientes")
-			registros = aba_clientes.get_all_records()
-			
-			texto_devedores = "💸 *LISTA DE QUEM ESTÁ DEVENDO* 💸\n\n"
-			tem_devedor = False
-			valor_total_rua = 0.0
-			
-			for linha in registros:
-				nome = str(linha.get("Nome", "")).strip()
-				saldo_str = str(linha.get("Saldo_Devedor", "R$ 0,00"))
-				
-				try:
-					saldo_float = float(saldo_str.replace("R$", "").replace(".", "").replace(",", ".").strip())
-					if saldo_float > 0.01:
-						texto_devedores += f"▫️ *{nome}*: {saldo_str}\n"
-						valor_total_rua += saldo_float
-						tem_devedor = True
-				except ValueError:
-					pass
-					
-			if not tem_devedor:
-				return "Chefe, não tem ninguém devendo! Todo mundo com a conta em dia. 🎉"
-				
-			texto_devedores += f"\n💰 *Total na rua:* R$ {valor_total_rua:.2f}".replace('.', ',')
-			return texto_devedores
-			
-		except Exception as e:
-			print(f"❌ Erro ao listar devedores: {e}")
-			return "Chefe, deu erro na hora de puxar a lista de devedores da planilha."
+    return database.listar_todos_devedores_db()
 
 def calcular_total_seguro(itens_pedidos):
-	try:
-		aba_estoque = planilha_db.worksheet("Estoque")
-		registros = aba_estoque.get_all_records()
-		tabela_precos = {}
-		for linha in registros:
-			nome = str(linha.get("Item", "")).strip().lower()
-			try:
-				preco_bruto = linha.get("Preco_Unitario", 0)
-				# Se o Google Sheets já mandar como número, só confia e usa!
-				if isinstance(preco_bruto, (int, float)):
-					preco = float(preco_bruto)
-				else:
-					# Se vier como texto sujo, limpa
-					preco_str = str(preco_bruto).replace("R$", "").strip()
-					if "," in preco_str:
-						preco_str = preco_str.replace(".", "").replace(",", ".")
-					preco = float(preco_str)
-			except ValueError:
-				preco = 0.0
-			tabela_precos[nome] = preco
-			
-		valor_final = 0.0
-		for item in itens_pedidos:
-			nome_item = str(item.get("item", "")).strip().lower()
-			qtd = int(item.get("quantidade", 0))
-			preco_unit = tabela_precos.get(nome_item, 0.0)
-			valor_final += (qtd * preco_unit)
-		return valor_final
-	except Exception as e:
-		return 0.0
+    return database.calcular_total_seguro_db(itens_pedidos)
 
 def registrar_venda(telefone, nome_cliente, pedido, valor, local, itens_vendidos, status_pagamento="Pendente ⏳"):
-	with trava_planilha:
-		try:
-			aba_vendas = planilha_db.worksheet("Vendas")
-			data_hora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-			try:
-				valor_float = float(valor)
-				valor_formatado = f"R$ {valor_float:.2f}".replace('.', ',')
-			except:
-				valor_formatado = valor 
-			itens_str = json.dumps(itens_vendidos, ensure_ascii=False)
-			aba_vendas.append_row([data_hora, telefone, nome_cliente, pedido, valor_formatado, local, status_pagamento, itens_str])
-			time.sleep(1)
-			return True
-		except Exception as e:
-			return False
+    return database.registrar_venda_db(telefone, nome_cliente, pedido, valor, local, itens_vendidos, status_pagamento)
 
 def solicitar_encomenda(telefone, nome_cliente, pedido, data_entrega):
-	with trava_planilha:
-		try:
-			aba_encomendas = planilha_db.worksheet("Encomendas")
-			data_hoje = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-			aba_encomendas.append_row([data_hoje, data_entrega, telefone, nome_cliente, pedido, "Aguardando Aprovação 🟡"])
-			time.sleep(1)
-			return True
-		except Exception as e:
-			return False
+    return database.solicitar_encomenda_db(telefone, nome_cliente, pedido, data_entrega)
 
 def confirmar_encomenda_admin(nome_buscado, valor_final):
-	with trava_planilha:
-		try:
-			aba_encomendas = planilha_db.worksheet("Encomendas")
-			telefones = aba_encomendas.col_values(3)
-			nomes = aba_encomendas.col_values(4)
-			status_col = aba_encomendas.col_values(6)
-			
-			for i in range(len(nomes) - 1, 0, -1):
-				if nome_buscado.lower() in str(nomes[i]).lower() and "Aguardando" in str(status_col[i]):
-					linha_real = i + 1
-					telefone_cliente = telefones[i]
-					nome_planilha = nomes[i]
-					aba_encomendas.update_cell(linha_real, 6, "Confirmada ✅")
-					time.sleep(1)
-					atualizar_compra_cliente(telefone_cliente, nome_planilha, valor_final)
-					return True, f"Feito, chefe! A encomenda de {nome_planilha} foi confirmada e lançada no Livro Caixa."
-			return False, f"Não achei encomenda pendente para '{nome_buscado}'."
-		except Exception as e:
-			return False, "Erro ao confirmar encomenda."
+    return database.confirmar_encomenda_admin_db(nome_buscado, valor_final)
 
 def atualizar_status_pagamento(nome_buscado):
-	with trava_planilha:
-		try:
-			aba_vendas = planilha_db.worksheet("Vendas")
-			nomes = aba_vendas.col_values(3) 
-			status_col = aba_vendas.col_values(7)
-			for i in range(len(nomes) - 1, 0, -1): 
-				if nome_buscado.lower() in str(nomes[i]).lower():
-					linha_real = i + 1
-					if len(status_col) < linha_real or "Pendente" in str(status_col[i]):
-						aba_vendas.update_cell(linha_real, 7, "Pago ✅")
-						time.sleep(1)
-						return True, f"Prontinho! Baixa do pagamento de {nome_buscado} concluída."
-					else:
-						return False, f"O pedido mais recente de {nome_buscado} já estava Pago."
-			return False, f"Não achei pedido pendente para {nome_buscado}."
-		except Exception as e:
-			return False, "Erro ao dar baixa no pagamento."
+    return database.atualizar_status_pagamento_db(nome_buscado)
 
 def verificar_saldo_cliente(telefone):
-	global cache_planilha
-	agora = time.time()
-	
-	# Se já pesquisamos esse cliente nos últimos 30 segundos, retorna da RAM
-	if telefone in cache_planilha["saldos"] and (agora - cache_planilha["saldos"][telefone]["tempo"]) < TEMPO_CACHE:
-		return cache_planilha["saldos"][telefone]["dados"]
-		
-	try:
-		aba_clientes = planilha_db.worksheet("Clientes")
-		registros = aba_clientes.get_all_records()
-		saldo_encontrado = "R$ 0,00"
-		
-		for linha in registros:
-			if str(linha.get("Telefone", "")) == str(telefone):
-				saldo_encontrado = str(linha.get("Saldo_Devedor", "R$ 0,00"))
-				break
-				
-		# Guarda o saldo desse cliente específico no Cache
-		cache_planilha["saldos"][telefone] = {"dados": saldo_encontrado, "tempo": agora}
-		return saldo_encontrado
-	except Exception:
-		return "R$ 0,00"
+    return database.verificar_saldo_cliente_db(telefone)
 
 def atualizar_compra_cliente(telefone, nome, valor_compra):
-	with trava_planilha:
-		try:
-			aba_clientes = planilha_db.worksheet("Clientes")
-			registros = aba_clientes.get_all_records()
-			for i, linha in enumerate(registros):
-				if str(linha.get("Telefone", "")) == str(telefone):
-					linha_cliente = i + 2
-					try:
-						total_comp = float(str(linha.get("Total_Comprado", "0")).replace("R$", "").replace(".", "").replace(",", ".").strip() or 0)
-						total_pago = float(str(linha.get("Total_Pago", "0")).replace("R$", "").replace(".", "").replace(",", ".").strip() or 0)
-					except:
-						total_comp = total_pago = 0.0
-					novo_total_comp = total_comp + float(valor_compra)
-					saldo_devedor = novo_total_comp - total_pago
-					aba_clientes.update_cell(linha_cliente, 3, f"R$ {novo_total_comp:.2f}".replace('.', ','))
-					aba_clientes.update_cell(linha_cliente, 5, f"R$ {saldo_devedor:.2f}".replace('.', ','))
-					time.sleep(1)
-					return True
-			valor_fmt = f"R$ {float(valor_compra):.2f}".replace('.', ',')
-			aba_clientes.append_row([telefone, nome, valor_fmt, "R$ 0,00", valor_fmt])
-			time.sleep(1)
-			return True
-		except Exception as e:
-			return False
+    return database.atualizar_compra_cliente_db(telefone, nome, valor_compra)
 
 def registrar_pagamento_fiado(nome_buscado, valor_pago):
-	with trava_planilha:
-		try:
-			aba_clientes = planilha_db.worksheet("Clientes")
-			registros = aba_clientes.get_all_records()
-			for i, linha in enumerate(registros):
-				nome_planilha = str(linha.get("Nome", "")).strip().lower()
-				if nome_buscado.lower() in nome_planilha:
-					linha_cliente = i + 2
-					try:
-						total_comp = float(str(linha.get("Total_Comprado", "0")).replace("R$", "").replace(".", "").replace(",", ".").strip() or 0)
-						total_pago = float(str(linha.get("Total_Pago", "0")).replace("R$", "").replace(".", "").replace(",", ".").strip() or 0)
-					except:
-						total_comp = total_pago = 0.0
-					novo_total_pago = total_pago + float(valor_pago)
-					saldo_devedor = total_comp - novo_total_pago
-					pago_fmt = f"R$ {novo_total_pago:.2f}".replace('.', ',')
-					saldo_fmt = f"R$ {saldo_devedor:.2f}".replace('.', ',')
-					aba_clientes.update_cell(linha_cliente, 4, pago_fmt)
-					aba_clientes.update_cell(linha_cliente, 5, saldo_fmt)
-					time.sleep(1)
-					if saldo_devedor <= 0.01: 
-						try:
-							aba_vendas = planilha_db.worksheet("Vendas")
-							nomes_vendas = aba_vendas.col_values(3)
-							status_vendas = aba_vendas.col_values(7)
-							for v in range(len(nomes_vendas) - 1, 0, -1):
-								if nome_buscado.lower() in str(nomes_vendas[v]).lower() and "Pendente" in str(status_vendas[v]):
-									aba_vendas.update_cell(v + 1, 7, "Pago ✅")
-							time.sleep(1)
-						except Exception as e:
-							pass
-						return True, f"Pronto! Pagamento de R$ {valor_pago} quitou a dívida de {str(linha.get('Nome', ''))}. Saldo zerado!"
-					else:
-						return True, f"Anotado! {str(linha.get('Nome', ''))} pagou R$ {valor_pago}. Restam {saldo_fmt}."
-			return False, f"Cliente '{nome_buscado}' não encontrado."
-		except Exception as e:
-			return False, "Erro ao registrar pagamento."
+    return database.registrar_pagamento_fiado_db(nome_buscado, valor_pago)
 
 def gerar_extrato_fiado(busca, por_telefone=False):
-	with trava_planilha:
-		try:
-			aba_clientes = planilha_db.worksheet("Clientes")
-			registros = aba_clientes.get_all_records()
-			saldo_total = "R$ 0,00"
-			total_pago = "R$ 0,00"
-			total_comprado = "R$ 0,00"
-			nome_cliente_real = busca
-			telefone_real = busca if por_telefone else ""
-			cliente_encontrado = False
-			
-			for cli in registros:
-				nome_planilha = str(cli.get("Nome", ""))
-				tel_planilha = str(cli.get("Telefone", ""))
-				if (por_telefone and tel_planilha == str(busca)) or (not por_telefone and str(busca).lower() in nome_planilha.lower()):
-					saldo_total = str(cli.get("Saldo_Devedor", "R$ 0,00"))
-					total_pago = str(cli.get("Total_Pago", "R$ 0,00"))
-					total_comprado = str(cli.get("Total_Comprado", "R$ 0,00"))
-					nome_cliente_real = nome_planilha
-					telefone_real = tel_planilha
-					cliente_encontrado = True
-					break
-					
-			if not cliente_encontrado:
-				return False, "Registro não encontrado."
-				
-			try:
-				valor_saldo = float(saldo_total.replace("R$", "").replace(".", "").replace(",", ".").strip())
-				if valor_saldo <= 0.01:
-					return True, f"A sua conta está zerada! ✅" if por_telefone else f"A conta de {nome_cliente_real} está zerada! ✅"
-			except ValueError:
-				pass
-				
-			# Proteção de privacidade
-			if por_telefone:
-				extrato = "🧾 *SEU EXTRATO DE COMPRAS*\n\n"
-			else:
-				extrato = f"🧾 *EXTRATO - {nome_cliente_real}*\n\n"
-				
-			tem_pedidos = False
-			aba_vendas = planilha_db.worksheet("Vendas")
-			dados_vendas = aba_vendas.get_all_values()
-			
-			ultimas_compras = []
-			
-			for linha in reversed(dados_vendas[1:]):
-				if len(linha) >= 7:
-					if "Pendente" in str(linha[6]) and str(linha[1]) == telefone_real:
-						pedido_limpo = linha[3]
-						if len(linha) >= 8 and str(linha[7]).strip():
-							try:
-								lista = [f"{item.get('quantidade', '')} {item.get('item', '')}" for item in json.loads(linha[7])]
-								if lista: pedido_limpo = ", ".join(lista)
-							except: pass
-						ultimas_compras.append(f"▫️ {linha[0].split(' ')[0]}: {pedido_limpo} -> {linha[4]}")
-						
-			if ultimas_compras:
-				tem_pedidos = True
-				extrato += "*Últimas movimentações pendentes:*\n"
-				# Mostra apenas as 10 últimas para não poluir a tela
-				for compra in ultimas_compras[:10]:
-					extrato += compra + "\n"
-				if len(ultimas_compras) > 10:
-					extrato += f"▫️ ... e mais {len(ultimas_compras) - 10} compras antigas.\n"
-					
-			try:
-				aba_encomendas = planilha_db.worksheet("Encomendas")
-				dados_enc = aba_encomendas.get_all_values()
-				texto_enc = ""
-				for linha in dados_enc[1:]:
-					if len(linha) >= 6 and "Confirmada" in str(linha[5]) and str(linha[2]) == telefone_real:
-						texto_enc += f"🎂 {linha[0].split(' ')[0]} (Entrega: {linha[1]}) -> {linha[4]}\n"
-						tem_pedidos = True
-				if texto_enc: extrato += "\n*Encomendas inclusas:*\n" + texto_enc
-			except: pass
-			
-			# --- NOVO BLOCO DE RESUMO ---
-			extrato += "\n📊 *RESUMO DA CONTA:*\n"
-			extrato += f"🛒 Total Comprado (Histórico): {total_comprado}\n"
-			extrato += f"✅ Valor Abatido/Pago: {total_pago}\n"
-			extrato += f"💰 *SALDO DEVEDOR ATUAL:* {saldo_total}"
-			
-			return True, extrato
-		except Exception as e:
-			return False, "Erro ao puxar extrato."
+    return database.gerar_extrato_fiado_db(busca, por_telefone)
 
 def buscar_telefone_na_agenda(nome_buscado):
 	try:
@@ -639,240 +262,31 @@ def buscar_telefone_na_agenda(nome_buscado):
 		return "erro", "Erro na agenda"
 
 def cancelar_ultimo_pedido(telefone, tipo_alvo="qualquer"):
-	with trava_planilha:
-		try:
-			if tipo_alvo in ["venda", "qualquer"]:
-				aba_vendas = planilha_db.worksheet("Vendas")
-				telefones = aba_vendas.col_values(2)
-				status_col = aba_vendas.col_values(7)
-				for i in range(len(telefones) - 1, 0, -1):
-					if telefones[i] == telefone and "Cancelado" not in str(status_col[i]):
-						aba_vendas.update_cell(i + 1, 7, "Cancelado ❌")
-						linha_dados = aba_vendas.row_values(i + 1)
-						try:
-							valor_cancelado = float(linha_dados[4].replace("R$", "").replace(".", "").replace(",", ".").strip())
-							aba_clientes = planilha_db.worksheet("Clientes")
-							registros = aba_clientes.get_all_records()
-							for k, cli in enumerate(registros):
-								if str(cli.get("Telefone", "")) == telefone:
-									tc = float(str(cli.get("Total_Comprado", "0")).replace("R$", "").replace(".", "").replace(",", ".").strip() or 0)
-									tp = float(str(cli.get("Total_Pago", "0")).replace("R$", "").replace(".", "").replace(",", ".").strip() or 0)
-									nc = max(0, tc - valor_cancelado)
-									aba_clientes.update_cell(k + 2, 3, f"R$ {nc:.2f}".replace('.', ','))
-									aba_clientes.update_cell(k + 2, 5, f"R$ {(nc - tp):.2f}".replace('.', ','))
-									break
-						except: pass
-						time.sleep(1)
-						return True, "Prontinho! Pedido cancelado e valor retirado da conta."
-			if tipo_alvo in ["encomenda", "qualquer"]:
-				aba_encomendas = planilha_db.worksheet("Encomendas")
-				telefones_enc = aba_encomendas.col_values(3)
-				status_enc = aba_encomendas.col_values(6)
-				for i in range(len(telefones_enc) - 1, 0, -1):
-					if telefones_enc[i] == telefone and "Cancelada" not in str(status_enc[i]):
-						aba_encomendas.update_cell(i + 1, 6, "Cancelada ❌")
-						time.sleep(1)
-						if "Confirmada" in str(status_enc[i]):
-							return True, "Encomenda cancelada. Fale com a chefe sobre possíveis sinais pagos."
-						return True, "Sua encomenda foi cancelada!"
-			return False, "Nenhum pedido recente encontrado."
-		except Exception as e:
-			return False, "Erro ao cancelar."
+    return database.cancelar_ultimo_pedido_db(telefone, tipo_alvo)
 
 def cancelar_pedido_admin(nome_buscado):
-	with trava_planilha:
-		try:
-			aba_vendas = planilha_db.worksheet("Vendas")
-			nomes_col = aba_vendas.col_values(3)
-			status_col = aba_vendas.col_values(7)
-			for i in range(len(nomes_col) - 1, 0, -1):
-				if nome_buscado.lower() in str(nomes_col[i]).lower() and "Cancelado" not in str(status_col[i]):
-					linha_real = i + 1
-					linha_dados = aba_vendas.row_values(linha_real)
-					aba_vendas.update_cell(linha_real, 7, "Cancelado ❌")
-					try:
-						valor_cancelado = float(linha_dados[4].replace("R$", "").replace(".", "").replace(",", ".").strip())
-						aba_clientes = planilha_db.worksheet("Clientes")
-						registros = aba_clientes.get_all_records()
-						for k, cli in enumerate(registros):
-							if nome_buscado.lower() in str(cli.get("Nome", "")).lower() or str(cli.get("Nome", "")).lower() in str(nomes_col[i]).lower():
-								tc = float(str(cli.get("Total_Comprado", "0")).replace("R$", "").replace(".", "").replace(",", ".").strip() or 0)
-								tp = float(str(cli.get("Total_Pago", "0")).replace("R$", "").replace(".", "").replace(",", ".").strip() or 0)
-								nc = max(0, tc - valor_cancelado)
-								aba_clientes.update_cell(k + 2, 3, f"R$ {nc:.2f}".replace('.', ','))
-								aba_clientes.update_cell(k + 2, 5, f"R$ {(nc - tp):.2f}".replace('.', ','))
-								break
-					except: pass
-					time.sleep(1)
-					return True, f"Feito! Venda de '{nomes_col[i]}' cancelada."
-			return False, f"Nenhuma venda recente para '{nome_buscado}'."
-		except Exception as e:
-			return False, "Erro ao cancelar."
+    return database.cancelar_pedido_admin_db(nome_buscado)
 
 def registrar_gasto_admin(tipo, descricao, valor, categoria_aba="Financas_Empresa"):
-	with trava_planilha:
-		try:
-			aba_financas = planilha_db.worksheet(categoria_aba)
-			data_atual = datetime.now().strftime("%d/%m/%Y")
-			aba_financas.append_row([data_atual, tipo, descricao, valor])
-			time.sleep(1)
-			return True
-		except Exception as e:
-			return False
+    return database.registrar_gasto_admin_db(tipo, descricao, valor, categoria_aba)
 
 def relatorio_pedidos_admin():
-	with trava_planilha:
-		try:
-			hoje = datetime.now().strftime("%d/%m/%Y")
-			texto = f"📋 *RESUMO DE PEDIDOS - {hoje}*\n\n📦 *PRONTA ENTREGA:*\n"
-			aba_vendas = planilha_db.worksheet("Vendas")
-			dados_vendas = aba_vendas.get_all_values() 
-			
-			v_hoje = 0
-			faturamento_vendas = 0.0
-			pedidos_agrupados = {} # Dicionário para mesclar os pedidos
-			
-			for l in dados_vendas[1:]:
-				# Adicionamos a trava 'and "Migração" not in str(l[5])' para pular as notinhas antigas
-				if len(l) >= 7 and hoje in str(l[0]) and "Cancelado" not in str(l[6]) and "Migração" not in str(l[5]):
-					cliente = str(l[2]).strip()
-					pedido = str(l[3]).strip()
-					local = str(l[5]).strip()
-					
-					try:
-						valor_limpo = float(str(l[4]).replace("R$", "").replace(".", "").replace(",", ".").strip())
-					except ValueError:
-						valor_limpo = 0.0
-						
-					faturamento_vendas += valor_limpo
-					v_hoje += 1
-					
-					# Se o cliente já comprou algo hoje, soma o valor e junta o texto
-					if cliente in pedidos_agrupados:
-						pedidos_agrupados[cliente]["pedido"] += f" + {pedido}"
-						pedidos_agrupados[cliente]["valor"] += valor_limpo
-					else:
-						# Se é a primeira compra do dia, cria o registro
-						pedidos_agrupados[cliente] = {
-							"pedido": pedido, 
-							"valor": valor_limpo, 
-							"local": local
-						}
-						
-			if v_hoje == 0: 
-				texto += "Nenhum pedido finalizado hoje.\n"
-			else:
-				# Agora varremos o dicionário mesclado para montar o texto
-				for cli, dados in pedidos_agrupados.items():
-					valor_fmt = f"R$ {dados['valor']:.2f}".replace('.', ',')
-					texto += f"▫️ *{cli}*: {dados['pedido']} ({valor_fmt} - {dados['local']})\n"
-					
-				texto += f"\n💰 *Faturamento do Dia (Pronta Entrega):* R$ {faturamento_vendas:.2f}".replace('.', ',') + "\n"
-
-			texto += "\n🎂 *ENCOMENDAS ATIVAS:*\n"
-			aba_encomendas = planilha_db.worksheet("Encomendas")
-			dados_enc = aba_encomendas.get_all_values()
-			e_ativas = 0
-			for l in dados_enc[1:]:
-				if len(l) >= 6 and "Cancelada" not in str(l[5]):
-					if "Aguardando" in str(l[5]) or "Confirmada" in str(l[5]):
-						texto += f"▫️ *{l[3]}* (Para {l[1]}): {l[4]} - {l[5]}\n"
-						e_ativas += 1
-						
-			if e_ativas == 0: 
-				texto += "Nenhuma encomenda pendente.\n"
-				
-			return True, texto
-			
-		except Exception as e:
-			print(f"Erro no relatorio: {e}")
-			return False, "Erro ao gerar relatório da chefe."
+    return database.relatorio_pedidos_admin_db()
 
 def gerar_relatorio_financeiro(mes_ano=None):
-	with trava_planilha:
-		try:
-			# Se não vier mês nenhum, usa o mês atual
-			if not mes_ano:
-				mes_ano = datetime.now().strftime("%m/%Y")
-			
-			# Transforma "04/2026" em "Abril" para o título ficar bonito
-			try:
-				nome_mes = datetime.strptime(mes_ano, "%m/%Y").strftime("%B").capitalize()
-			except:
-				nome_mes = mes_ano
-			
-			# 1. Puxar Vendas (Entradas)
-			aba_vendas = planilha_db.worksheet("Vendas")
-			dados_vendas = aba_vendas.get_all_values()
-			
-			total_vendido = 0.0
-			total_recebido = 0.0 # Vendas já pagas
-			
-			for l in dados_vendas[1:]:
-				# AQUI ESTÁ A MAGIA: Filtramos usando o 'mes_ano' (ex: "03/2026")
-				if len(l) >= 7 and mes_ano in str(l[0]) and "Cancelado" not in str(l[6]):
-					try:
-						valor_limpo = str(l[4]).replace("R$", "").replace(".", "").replace(",", ".").strip()
-						valor = float(valor_limpo)
-						total_vendido += valor
-						if "Pago" in str(l[6]):
-							total_recebido += valor
-					except ValueError:
-						pass
-
-			# 2. Puxar Gastos (Saídas)
-			aba_financas = planilha_db.worksheet("Financas_Empresa")
-			dados_financas = aba_financas.get_all_values()
-			
-			total_gasto = 0.0
-			
-			for l in dados_financas[1:]:
-				if len(l) >= 4 and mes_ano in str(l[0]):
-					try:
-						gasto_limpo = str(l[3]).replace("R$", "").replace(".", "").replace(",", ".").strip()
-						total_gasto += float(gasto_limpo)
-					except ValueError:
-						pass
-						
-			# 3. Matemática do DRE (Demonstrativo de Resultados)
-			lucro_liquido = total_vendido - total_gasto
-			saldo_em_caixa = total_recebido - total_gasto # Dinheiro real que tá na mão
-			
-			# 4. Montar o Relatório Bonito
-			relatorio = f"📊 *FECHAMENTO MENSAL - {nome_mes}*\n\n"
-			relatorio += f"📈 *Total Vendido:* R$ {total_vendido:.2f}\n".replace('.', ',')
-			relatorio += f"✅ *Total Recebido (Pix/Dinheiro):* R$ {total_recebido:.2f}\n".replace('.', ',')
-			relatorio += f"⏳ *A Receber (Fiado):* R$ {(total_vendido - total_recebido):.2f}\n\n".replace('.', ',')
-			
-			relatorio += f"📉 *Despesas/Insumos:* R$ {total_gasto:.2f}\n".replace('.', ',')
-			relatorio += "------------------------\n"
-			
-			if lucro_liquido > 0:
-				relatorio += f"💰 *LUCRO LÍQUIDO:* R$ {lucro_liquido:.2f} 🥳\n\n".replace('.', ',')
-				
-				# --- REGRA DOS POTES (10/90) ---
-				caixa_empresa = lucro_liquido * 0.10
-				pro_labore = lucro_liquido * 0.90
-				
-				relatorio += "🍯 *DIVISÃO DO LUCRO (Regra 10/90):*\n"
-				relatorio += f"🏢 *Caixa da Empresa (10%):* R$ {caixa_empresa:.2f} (Para repor estoque e crescer)\n".replace('.', ',')
-				relatorio += f"👩‍🍳 *Seu Pró-Labore (90%):* R$ {pro_labore:.2f} (Seu salário livre!)\n\n".replace('.', ',')
-			else:
-				relatorio += f"⚠️ *PREJUÍZO/EMPATE:* R$ {lucro_liquido:.2f} 🛑\n".replace('.', ',')
-				relatorio += "🍯 *DIVISÃO DO LUCRO:* Sem lucro livre para divisão neste mês ainda.\n\n"
-				
-			relatorio += f"🏦 *Saldo Real no Caixa (Recebido - Gasto):* R$ {saldo_em_caixa:.2f}".replace('.', ',')
-			
-			return True, relatorio
-			
-		except Exception as e:
-			print(f"Erro no DRE: {e}")
-			return False, "Chefe, não consegui calcular o balanço. Verifique se a aba 'Financas_Empresa' está no formato correto."
+    return database.gerar_relatorio_financeiro_db(mes_ano)
 
 def conectar_agenda():
 	escopos = ['https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 	try:
-		credenciais = ServiceAccountCredentials.from_json_keyfile_name('credenciais.json', escopos)
+		creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+		if creds_json:
+			credenciais = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(creds_json), escopos)
+		elif os.path.exists('credenciais.json'):
+			credenciais = ServiceAccountCredentials.from_json_keyfile_name('credenciais.json', escopos)
+		else:
+			print("⚠️ Nenhuma credencial do Google encontrada.")
+			return None
 		servico = build('calendar', 'v3', credentials=credenciais)
 		print("📅 Conectado ao Google Agenda com sucesso!")
 		return servico
@@ -978,175 +392,91 @@ def listar_compromissos_dia(data_str=None):
 		return []
 
 def registrar_tarefa_lista(tarefa):
-	with trava_planilha:
-		try:
-			aba_tarefas = planilha_db.worksheet("Tarefas")
-			data_hoje = datetime.now().strftime("%d/%m/%Y")
-			# Status padrão 'Pendente' para ela dar baixa depois
-			aba_tarefas.append_row([data_hoje, tarefa, "Pendente ⬜"])
-			return True
-		except Exception:
-			return False
+    return database.registrar_tarefa_lista_db(tarefa)
 
 def zerar_estoque_completo():
-	"""Define 'Não' para todos os itens da planilha de Estoque."""
-	with trava_planilha:
-		try:
-			aba_estoque = planilha_db.worksheet("Estoque")
-			registros = aba_estoque.get_all_records()
-			
-			for i, linha in enumerate(registros):
-				# Coluna 2 é a coluna 'Disponivel'
-				aba_estoque.update_cell(i + 2, 2, "Não")
-			
-			return True
-		except Exception as e:
-			print(f"Erro ao zerar estoque: {e}")
-			return False
+    return database.zerar_estoque_completo_db()
 
 def calcular_preco_em_doces(item_desejado, valor_item):
-	with trava_planilha:
-		try:
-			aba_estoque = planilha_db.worksheet("Estoque")
-			registros = aba_estoque.get_all_records()
-			
-			produto_ref = None
-			preco_ref = 0.0
-			
-			# Tenta achar o Bolo de Fubá como base psicológica
-			for l in registros:
-				if "bolo de fubá (maior)" in str(l.get("Item", "")).lower():
-					try:
-						preco_bruto = l.get("Preco_Unitario", 0)
-						if isinstance(preco_bruto, (int, float)):
-							preco_ref = float(preco_bruto)
-						else:
-							preco_ref = float(str(preco_bruto).replace("R$", "").replace(".", "").replace(",", ".").strip())
-						produto_ref = str(l.get("Item", ""))
-						break
-					except: pass
-					
-			# Se não achar o bolo, pega o primeiro item com preço válido
-			if not produto_ref:
-				for l in registros:
-					try:
-						preco_bruto = l.get("Preco_Unitario", 0)
-						if isinstance(preco_bruto, (int, float)):
-							preco_teste = float(preco_bruto)
-						else:
-							preco_teste = float(str(preco_bruto).replace("R$", "").replace(".", "").replace(",", ".").strip())
-							
-						if preco_teste > 0:
-							preco_ref = preco_teste
-							produto_ref = str(l.get("Item", ""))
-							break
-					except: pass
-					
-			if preco_ref > 0:
-				# A regra dos 20%: Faturamento total precisa ser 5x o valor desejado
-				faturamento_necessario = valor_item * 5
-				qtd_real = int(faturamento_necessario / preco_ref)
-				
-				msg = f"🤔 *Análise de Compra: {item_desejado.title()}*\n\n"
-				msg += f"Chefe, esse item custa R$ {valor_item:.2f}.\n\n".replace('.', ',')
-				msg += f"Pela nossa *Regra dos Potes*, para você colocar esse valor limpo no bolso sem tirar o dinheiro de repor ingredientes da empresa, a confeitaria precisa faturar R$ {faturamento_necessario:.2f}!\n\n".replace('.', ',')
-				msg += f"🥵 Na prática, você vai precisar assar e vender **{qtd_real} {produto_ref}s** só para pagar isso.\n\n"
-				msg += "Vale a pena o esforço ou deixamos para o mês que vem? 😅"
-				
-				return True, msg
-			else:
-				return False, "Chefe, não consegui calcular o suor porque não achei o preço dos produtos."
-		except Exception as e:
-			print(f"Erro no calculo de doces: {e}")
-			return False, "Erro ao calcular o preço em doces."
+    return database.calcular_preco_em_doces_db(item_desejado, valor_item)
 
 def registrar_nota_fiscal(supermercado, valor_empresa, valor_pessoal, itens_empresa):
-	with trava_planilha:
-		try:
-			data_atual = datetime.now().strftime("%d/%m/%Y")
-			
-			# 1. Salva gasto da empresa
-			if valor_empresa > 0:
-				aba_financas = planilha_db.worksheet("Financas_Empresa")
-				aba_financas.append_row([data_atual, "Saída", f"Insumos - {supermercado}", valor_empresa])
-				
-			# 2. Salva gasto pessoal (O Python vai criar a linha na aba Financas_Pessoal)
-			if valor_pessoal > 0:
-				try:
-					aba_pessoal = planilha_db.worksheet("Financas_Pessoal")
-					aba_pessoal.append_row([data_atual, "Saída", f"Supermercado - {supermercado}", valor_pessoal])
-				except Exception as e:
-					print(f"⚠️ Aba 'Financas_Pessoal' não encontrada: {e}")
-			
-			# 3. Alimenta a inteligência de mercado apenas com itens da empresa
-			if itens_empresa:
-				aba_precos = planilha_db.worksheet("Historico_Precos")
-				linhas_para_adicionar = []
-				
-				for item in itens_empresa:
-					# ESCUDO: Verifica se a IA mandou um objeto estruturado e não apenas uma palavra solta
-					if isinstance(item, dict):
-						nome = item.get("item", "")
-						qtd = item.get("quantidade", "")
-						preco = item.get("preco_unitario", 0)
-						
-						if nome and preco > 0: # Evita salvar linhas vazias
-							linhas_para_adicionar.append([data_atual, supermercado, nome, str(qtd), preco])
-					
-				if linhas_para_adicionar:
-					aba_precos.append_rows(linhas_para_adicionar)
-					
-			time.sleep(1)
-			return True
-		except Exception as e:
-			print(f"❌ Erro ao processar nota fiscal na planilha: {e}")
-			return False
+    return database.registrar_nota_fiscal_db(supermercado, valor_empresa, valor_pessoal, itens_empresa)
 
 @app.route('/webhook', methods=['POST'])
 def receber_mensagem():
 	try:
 		dados_completos = request.json
 		
-		if not dados_completos or 'data' not in dados_completos:
+		if not dados_completos:
 			return jsonify({"erro": "Dados inválidos"}), 400
 			
-		dados = dados_completos['data']
-		chat_id = dados['key']['remoteJid'] 
-		numero = dados['key'].get('participant', chat_id) 
+		dados = dados_completos.get('data', dados_completos)
+		key = dados.get('key', {})
+		
+		# Ignora mensagens enviadas pelo próprio bot/instância
+		if key.get('fromMe', False):
+			return jsonify({"status": "ignorado_from_me"}), 200
+			
+		chat_id = key.get('remoteJid', '')
+		if chat_id == 'status@broadcast':
+			return jsonify({"status": "ignorado_status"}), 200
+			
+		numero = key.get('participant', chat_id)
+		
+		# Normaliza formato para @c.us
+		if numero and '@s.whatsapp.net' in numero:
+			numero = numero.replace('@s.whatsapp.net', '@c.us')
+		if chat_id and '@s.whatsapp.net' in chat_id:
+			chat_id = chat_id.replace('@s.whatsapp.net', '@c.us')
 
-		print(f"👀 [DEBUG] Mensagem recebida do número: '{numero}'")
+		print(f"👀 [DEBUG] Mensagem recebida do número: '{numero}' (Chat: '{chat_id}')")
 
-		if numero not in NUMERO_TESTE:
+		if NUMERO_TESTE and NUMERO_TESTE != "000" and numero not in NUMERO_TESTE:
 			print(f"🔒 [DEBUG] Bloqueado! O número recebido não bate com o NUMERO_TESTE: '{NUMERO_TESTE}'")
 			return jsonify({"status": "ignorado"}), 200
 		
 		nome_enviado = dados.get('pushName')
 		nome_cliente = nome_enviado if nome_enviado else numero.split('@')[0]
+		
+		is_group = chat_id.endswith('@g.us')
 		contexto_grupo = dados.get('groupContext', {})
-		is_group = contexto_grupo.get('isGroup', False)
-		nome_grupo = contexto_grupo.get('groupName', 'Privado')
-		mensagem = dados['message'].get('conversation', '')
+		nome_grupo = contexto_grupo.get('groupName', 'Grupo' if is_group else 'Privado')
+		
+		msg_obj = dados.get('message', {})
+		mensagem = ""
+		if isinstance(msg_obj, dict):
+			if 'conversation' in msg_obj:
+				mensagem = msg_obj['conversation']
+			elif 'extendedTextMessage' in msg_obj:
+				mensagem = msg_obj['extendedTextMessage'].get('text', '')
+			elif 'imageMessage' in msg_obj:
+				mensagem = msg_obj['imageMessage'].get('caption', '')
+			elif 'documentMessage' in msg_obj:
+				mensagem = msg_obj['documentMessage'].get('caption', '')
+		elif isinstance(msg_obj, str):
+			mensagem = msg_obj
+			
 		media_info = dados.get('media', {})
-		media_data = media_info.get('data')
-		media_mime = media_info.get('mimeType')
+		media_data = media_info.get('data') or dados.get('base64')
+		media_mime = media_info.get('mimeType') or dados.get('mimetype')
 		
 		# --- 🎭 INÍCIO DO MODO CAMUFLAGEM (MOCK) 🎭 ---
 		if numero in NUMERO_TESTE and mensagem.lower().startswith("simular "):
 			try:
-				# Divide a string em duas partes: "Simular Nome" e "A mensagem de fato"
 				partes = mensagem.split(":", 1)
 				if len(partes) == 2:
-					# Extrai o nome tirando a palavra "simular "
 					nome_falso = partes[0].lower().replace("simular ", "").title().strip()
-					
-					# Substitui as variáveis originais pelas falsas
-					nome_cliente = nome_falso
-					# Cria um número de telefone fake único para essa pessoa
-					numero = f"553800000000_{nome_falso.lower().replace(' ', '_')}@c.us" 
-					# A mensagem real que vai para a IA
 					mensagem = partes[1].strip()
 					
-					print(f"🎭 [MODO TESTE] Kauã camuflado como: {nome_cliente}")
+					if nome_falso.lower() == "admin" or nome_falso.lower() == "chefe":
+						numero = NUMERO_ADMIN
+						nome_cliente = "Chefe (Simulado)"
+						print(f"🎭 [MODO TESTE] Simulando a CHEFE.")
+					else:
+						nome_cliente = nome_falso
+						numero = f"553800000000_{nome_falso.lower().replace(' ', '_')}@c.us" 
+						print(f"🎭 [MODO TESTE] Simulando cliente: {nome_cliente}")
 			except Exception as e:
 				print(f"Erro na camuflagem: {e}")
 		# --- FIM DO MODO CAMUFLAGEM ---
@@ -1650,9 +980,16 @@ def receber_mensagem():
 		
 		if resposta_para_whatsapp:
 			historico_conversas[chave_historico].append(f"Assistente: {resposta_para_whatsapp}")
-			salvar_historico() 
+			salvar_historico()
+			enviar_whatsapp(chat_id, resposta_para_whatsapp)
 			
-		print(f"Mensagem que seria enviada: {resposta_para_whatsapp}")
+		if resposta_privada:
+			enviar_whatsapp(numero, resposta_privada)
+			
+		if notificacao_para_admin and ID_GRUPO_ADMIN:
+			enviar_whatsapp(ID_GRUPO_ADMIN, notificacao_para_admin)
+			
+		print(f"Mensagem enviada/processada: {resposta_para_whatsapp}")
 		return jsonify({
 			"status": "processado", 
 			"resposta": resposta_para_whatsapp, 
@@ -1666,33 +1003,53 @@ def receber_mensagem():
 
 @app.route('/briefing_matinal', methods=['GET'])
 def briefing_matinal():
-	eventos = listar_compromissos_dia()
-	
-	# --- NOVA BUSCA: TAREFAS PENDENTES ---
-	tarefas_texto = ""
-	try:
-		aba_t = planilha_db.worksheet("Tarefas")
-		registros = aba_t.get_all_records()
-		pendentes = [r['Tarefa'] for r in registros if "Pendente" in r.get('Status', '')]
-		if pendentes:
-			tarefas_texto = "\n📝 *LEMBRETES E TAREFAS:* \n" + "\n".join([f"▫️ {t}" for t in pendentes])
-	except: pass
+    eventos = listar_compromissos_dia()
+    
+    tarefas_texto = ""
+    with database.get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT tarefa FROM tarefas WHERE status LIKE '%Pendente%'")
+        pendentes = [row['tarefa'] for row in cur.fetchall()]
+        if pendentes:
+            tarefas_texto = "
+📝 *LEMBRETES E TAREFAS:* 
+" + "
+".join([f"▫️ {t}" for t in pendentes])
+            
+    aniversarios = database.verificar_aniversariantes_db()
+    texto_aniversarios = f"
 
-	if not eventos and not tarefas_texto:
-		return jsonify({"mensagem": "Bom dia, chefe! ☀️ Hoje a agenda e a lista de tarefas estão limpas. Dia de focar em novas produções!"})
-	
-	resumo = "☀️ *BOM DIA, CHEFE! Sua Agenda de Hoje:* ☀️\n\n"
-	for ev in eventos:
-		start = ev.get('start', {})
-		if 'dateTime' in start:
-			horario = start['dateTime'][11:16]
-			resumo += f"📌 *[{horario}]* {ev['summary']}\n"
-		else:
-			resumo += f"📌 *[Dia Todo]* {ev['summary']}\n"
-		resumo += f"📝 {ev.get('description', 'Sem detalhes')}\n\n"
-	
-	resumo += tarefas_texto + "\n\nJá quer que eu separe as etiquetas dos pedidos?"
-	return jsonify({"mensagem": resumo})
+{aniversarios}" if aniversarios else ""
+
+    if not eventos and not tarefas_texto and not aniversarios:
+        return jsonify({"mensagem": "Bom dia, chefe! ☀️ Hoje a agenda e a lista de tarefas estão limpas. Dia de focar em novas produções!"})
+    
+    resumo = "☀️ *BOM DIA, CHEFE! Sua Agenda de Hoje:* ☀️
+
+"
+    for ev in eventos:
+        start = ev.get('start', {})
+        if 'dateTime' in start:
+            horario = start['dateTime'][11:16]
+            resumo += f"📌 *[{horario}]* {ev['summary']}
+"
+        else:
+            resumo += f"📌 *[Dia Todo]* {ev['summary']}
+"
+        resumo += f"📝 {ev.get('description', 'Sem detalhes')}
+
+"
+    
+    resumo += tarefas_texto + texto_aniversarios + "
+
+Já quer que eu separe as etiquetas dos pedidos?"
+    return jsonify({"mensagem": resumo})
+
+@app.route('/relatorio_semanal', methods=['GET'])
+def relatorio_semanal():
+    relatorio = database.gerar_relatorio_semanal_db()
+    return jsonify({"mensagem": relatorio})
+
 
 @app.route('/estoque_automatico', methods=['GET'])
 def estoque_automatico():
@@ -1776,6 +1133,132 @@ def radar_vencimentos():
 def abrir_loja_automatico():
 	salvar_status_loja("ABERTO")
 	return jsonify({"mensagem": "Loja aberta com sucesso"}), 200
+
+
+@app.route('/backup_diario', methods=['POST'])
+def backup_diario():
+    import backup
+    sucesso = backup.realizar_backup()
+    if sucesso:
+        return jsonify({"mensagem": "✅ Backup diário do banco de dados (SQLite) salvo no Google Drive com sucesso!"})
+    return jsonify({"mensagem": "❌ Erro ao tentar salvar o backup diário no Google Drive."})
+
+
+# --- AGENDADOR DE TAREFAS NATIVO (APScheduler) ---
+def iniciar_agendador():
+    try:
+        tz = pytz.timezone('America/Sao_Paulo')
+        scheduler = BackgroundScheduler(timezone=tz)
+
+        # 07:00 Briefing Matinal
+        def job_briefing():
+            with app.app_context():
+                try:
+                    res = briefing_matinal().json
+                    if res and res.get('mensagem') and ID_GRUPO_ADMIN:
+                        enviar_whatsapp(ID_GRUPO_ADMIN, res['mensagem'])
+                except Exception as e:
+                    print(f"Erro cron briefing: {e}")
+
+        # 08:00 Abertura
+        def job_abertura():
+            with app.app_context():
+                try:
+                    abrir_loja_automatico()
+                except Exception as e:
+                    print(f"Erro cron abertura: {e}")
+
+        # 09:00 Radar Vencimentos
+        def job_radar():
+            with app.app_context():
+                try:
+                    res = radar_vencimentos().json
+                    if res and res.get('mensagem') and ID_GRUPO_ADMIN:
+                        enviar_whatsapp(ID_GRUPO_ADMIN, res['mensagem'])
+                except Exception as e:
+                    print(f"Erro cron radar: {e}")
+
+        # 09:00 Segundas - Relatório Semanal
+        def job_relatorio():
+            with app.app_context():
+                try:
+                    res = relatorio_semanal().json
+                    if res and res.get('mensagem') and ID_GRUPO_ADMIN:
+                        enviar_whatsapp(ID_GRUPO_ADMIN, res['mensagem'])
+                except Exception as e:
+                    print(f"Erro cron relatorio: {e}")
+
+        # 10:00 Seg, Qua - Cardápio Superintendência
+        def job_superintendencia():
+            with app.app_context():
+                try:
+                    res = estoque_automatico().json
+                    cardapio = res.get('cardapio', '')
+                    if cardapio and "vazio" not in cardapio and "Não temos" not in cardapio:
+                        if ID_GRUPO_SUPERINTENDENCIA:
+                            enviar_whatsapp(ID_GRUPO_SUPERINTENDENCIA, cardapio)
+                except Exception as e:
+                    print(f"Erro cron superintendencia: {e}")
+
+        # 10:00 Ter, Qui, Sex - Cardápio APAE
+        def job_apae():
+            with app.app_context():
+                try:
+                    res = estoque_automatico().json
+                    cardapio = res.get('cardapio', '')
+                    if cardapio and "vazio" not in cardapio and "Não temos" not in cardapio:
+                        if ID_GRUPO_APAE:
+                            enviar_whatsapp(ID_GRUPO_APAE, cardapio)
+                except Exception as e:
+                    print(f"Erro cron apae: {e}")
+
+        # 16:30 Conferência de Sobras
+        def job_sobras():
+            with app.app_context():
+                try:
+                    res = conferir_final_rota().json
+                    if res and res.get('mensagem') and ID_GRUPO_ADMIN:
+                        enviar_whatsapp(ID_GRUPO_ADMIN, res['mensagem'])
+                except Exception as e:
+                    print(f"Erro cron sobras: {e}")
+
+        # 18:00 Fechamento de Segurança
+        def job_fechamento():
+            with app.app_context():
+                try:
+                    res = gatilho_seguranca_18h().json
+                    if res and res.get('mensagem') and ID_GRUPO_ADMIN:
+                        enviar_whatsapp(ID_GRUPO_ADMIN, res['mensagem'])
+                except Exception as e:
+                    print(f"Erro cron fechamento: {e}")
+
+        # 03:00 Backup Diário
+        def job_backup():
+            with app.app_context():
+                try:
+                    res = backup_diario().json
+                    if res and res.get('mensagem') and ID_GRUPO_ADMIN:
+                        enviar_whatsapp(ID_GRUPO_ADMIN, res['mensagem'])
+                except Exception as e:
+                    print(f"Erro cron backup: {e}")
+
+        scheduler.add_job(job_briefing, CronTrigger(hour=7, minute=0, timezone=tz))
+        scheduler.add_job(job_abertura, CronTrigger(hour=8, minute=0, timezone=tz))
+        scheduler.add_job(job_radar, CronTrigger(hour=9, minute=0, timezone=tz))
+        scheduler.add_job(job_relatorio, CronTrigger(day_of_week='mon', hour=9, minute=0, timezone=tz))
+        scheduler.add_job(job_superintendencia, CronTrigger(day_of_week='mon,wed', hour=10, minute=0, timezone=tz))
+        scheduler.add_job(job_apae, CronTrigger(day_of_week='tue,thu,fri', hour=10, minute=0, timezone=tz))
+        scheduler.add_job(job_sobras, CronTrigger(hour=16, minute=30, timezone=tz))
+        scheduler.add_job(job_fechamento, CronTrigger(hour=18, minute=0, timezone=tz))
+        scheduler.add_job(job_backup, CronTrigger(hour=3, minute=0, timezone=tz))
+
+        scheduler.start()
+        print("⏰ Agendador nativo (APScheduler) iniciado com sucesso no fuso America/Sao_Paulo!")
+    except Exception as e:
+        print(f"⚠️ Não foi possível iniciar o agendador de tarefas: {e}")
+
+# Inicia agendador automaticamente
+iniciar_agendador()
 
 if __name__ == '__main__':
 	print("Servidor rodando...")

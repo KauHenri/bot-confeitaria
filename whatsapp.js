@@ -341,4 +341,31 @@ cron.schedule('0 8 * * *', async () => {
 	}
 });
 
+
+// --- 03:00: BACKUP DIÁRIO NO GOOGLE DRIVE ---
+cron.schedule('0 3 * * *', async () => {
+	console.log('⏰ Executando backup diário...');
+	try {
+		const response = await axios.post('http://localhost:5000/backup_diario');
+		if (response.data.mensagem) {
+			await client.sendMessage(ID_GRUPO_ADMIN, response.data.mensagem);
+		}
+	} catch (error) {
+		console.error('Erro no cron de backup:', error.message);
+	}
+});
+
+// --- 09:00 (Segunda-feira): RELATÓRIO SEMANAL ---
+cron.schedule('0 9 * * 1', async () => {
+	console.log('⏰ Hora do Relatório Semanal...');
+	try {
+		const response = await axios.get('http://localhost:5000/relatorio_semanal');
+		if (response.data.mensagem) {
+			await client.sendMessage(ID_GRUPO_ADMIN, response.data.mensagem);
+		}
+	} catch (error) {
+		console.error('Erro no cron do relatório semanal:', error.message);
+	}
+});
+
 client.initialize();
