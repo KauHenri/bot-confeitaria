@@ -461,11 +461,11 @@ def webhook(subpath=None):
 				if chat_id and '@s.whatsapp.net' in chat_id:
 					chat_id = chat_id.replace('@s.whatsapp.net', '@c.us')
 		
-				print(f"👀 [DEBUG] Mensagem recebida do número: '{numero}' (Chat: '{chat_id}')")
+				print(f"👀 [DEBUG] Mensagem recebida do número: '{numero}' (Chat: '{chat_id}')", flush=True)
 		
 				if NUMERO_TESTE and NUMERO_TESTE != "000" and numero not in NUMERO_TESTE:
 					if chat_id != ID_GRUPO_ADMIN:
-						print(f"🔒 [DEBUG] Bloqueado! O número recebido não bate com o NUMERO_TESTE: '{NUMERO_TESTE}'")
+						print(f"🔒 [DEBUG] Bloqueado! O número recebido não bate com o NUMERO_TESTE: '{NUMERO_TESTE}'", flush=True)
 						return
 				
 				nome_enviado = dados.get('pushName')
@@ -529,8 +529,8 @@ def webhook(subpath=None):
 		
 				contexto_completo = "\n".join(historico_conversas[chave_historico][-5:])
 				
-				print(f"\n--- Nova Mensagem de {nome_cliente} ({numero}) ---")
-				print(f"Local: {nome_grupo} | Texto: {mensagem}")
+				print(f"\n--- Nova Mensagem de {nome_cliente} ({numero}) ---", flush=True)
+				print(f"Local: {nome_grupo} | Texto: {mensagem}", flush=True)
 				
 				resposta_para_whatsapp = ""
 				notificacao_para_admin = ""
@@ -538,7 +538,7 @@ def webhook(subpath=None):
 				
 				# --- MODO CHEFE (ADMINISTRADOR) ---
 				if numero == NUMERO_ADMIN or chat_id == ID_GRUPO_ADMIN:
-					print("👑 Processando comando da chefe...")
+					print("👑 Processando comando da chefe...", flush=True)
 					estoque_completo = obter_cardapio_completo()
 					
 					prompt_chefe = f"""
@@ -834,7 +834,7 @@ def webhook(subpath=None):
 						
 				# --- MODO CLIENTE (VENDAS) ---
 				else:
-					print("👤 Processando pedido de cliente...")
+					print("👤 Processando pedido de cliente...", flush=True)
 					
 					estoque_hoje = obter_estoque_atual()
 					saldo_atual_cliente = verificar_saldo_cliente(numero) 
@@ -1021,7 +1021,7 @@ def webhook(subpath=None):
 				if notificacao_para_admin and ID_GRUPO_ADMIN:
 					enviar_whatsapp(ID_GRUPO_ADMIN, notificacao_para_admin)
 					
-				print(f"Mensagem enviada/processada: {resposta_para_whatsapp}")
+				print(f"Mensagem enviada/processada: {resposta_para_whatsapp}", flush=True)
 				return True
 			except Exception as e:
 				import traceback
