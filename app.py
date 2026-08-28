@@ -423,7 +423,9 @@ def webhook(subpath=None):
 			else:
 				return jsonify({"status": "empty"}), 200
 				
-		key = dados.get('key', {})
+		# No Evolution API v2, os dados reais vêm dentro de 'message'
+		msg_container = dados.get('message', dados)
+		key = msg_container.get('key', {})
 		
 		# Ignora mensagens enviadas pelo próprio bot/instância
 		if key.get('fromMe', False):
@@ -444,17 +446,18 @@ def webhook(subpath=None):
 		print(f"👀 [DEBUG] Mensagem recebida do número: '{numero}' (Chat: '{chat_id}')")
 
 		if NUMERO_TESTE and NUMERO_TESTE != "000" and numero not in NUMERO_TESTE:
-			print(f"🔒 [DEBUG] Bloqueado! O número recebido não bate com o NUMERO_TESTE: '{NUMERO_TESTE}'")
-			return jsonify({"status": "ignorado"}), 200
+			if chat_id != ID_GRUPO_ADMIN:
+				print(f"🔒 [DEBUG] Bloqueado! O número recebido não bate com o NUMERO_TESTE: '{NUMERO_TESTE}'")
+				return jsonify({"status": "ignorado"}), 200
 		
-		nome_enviado = dados.get('pushName')
+		nome_enviado = msg_container.get('pushName')
 		nome_cliente = nome_enviado if nome_enviado else numero.split('@')[0]
 		
 		is_group = chat_id.endswith('@g.us')
-		contexto_grupo = dados.get('groupContext', {})
+		contexto_grupo = msg_container.get('groupContext', {})
 		nome_grupo = contexto_grupo.get('groupName', 'Grupo' if is_group else 'Privado')
 		
-		msg_obj = dados.get('message', {})
+		msg_obj = msg_container.get('message', {})
 		mensagem = ""
 		if isinstance(msg_obj, dict):
 			if 'conversation' in msg_obj:
