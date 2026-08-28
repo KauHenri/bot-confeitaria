@@ -8,6 +8,7 @@ from flask import Flask, request, jsonify
 import google.generativeai as genai
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
+from oauth2client.service_account import ServiceAccountCredentials
 from unidecode import unidecode
 import requests
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -1011,38 +1012,25 @@ def briefing_matinal():
         cur.execute("SELECT tarefa FROM tarefas WHERE status LIKE '%Pendente%'")
         pendentes = [row['tarefa'] for row in cur.fetchall()]
         if pendentes:
-            tarefas_texto = "
-📝 *LEMBRETES E TAREFAS:* 
-" + "
-".join([f"▫️ {t}" for t in pendentes])
+            tarefas_texto = "\n📝 *LEMBRETES E TAREFAS:* \n" + "\n".join([f"▫️ {t}" for t in pendentes])
             
     aniversarios = database.verificar_aniversariantes_db()
-    texto_aniversarios = f"
-
-{aniversarios}" if aniversarios else ""
+    texto_aniversarios = f"\n\n{aniversarios}" if aniversarios else ""
 
     if not eventos and not tarefas_texto and not aniversarios:
         return jsonify({"mensagem": "Bom dia, chefe! ☀️ Hoje a agenda e a lista de tarefas estão limpas. Dia de focar em novas produções!"})
     
-    resumo = "☀️ *BOM DIA, CHEFE! Sua Agenda de Hoje:* ☀️
-
-"
+    resumo = "☀️ *BOM DIA, CHEFE! Sua Agenda de Hoje:* ☀️\n\n"
     for ev in eventos:
         start = ev.get('start', {})
         if 'dateTime' in start:
             horario = start['dateTime'][11:16]
-            resumo += f"📌 *[{horario}]* {ev['summary']}
-"
+            resumo += f"📌 *[{horario}]* {ev['summary']}\n"
         else:
-            resumo += f"📌 *[Dia Todo]* {ev['summary']}
-"
-        resumo += f"📝 {ev.get('description', 'Sem detalhes')}
-
-"
+            resumo += f"📌 *[Dia Todo]* {ev['summary']}\n"
+        resumo += f"📝 {ev.get('description', 'Sem detalhes')}\n\n"
     
-    resumo += tarefas_texto + texto_aniversarios + "
-
-Já quer que eu separe as etiquetas dos pedidos?"
+    resumo += tarefas_texto + texto_aniversarios + "\n\nJá quer que eu separe as etiquetas dos pedidos?"
     return jsonify({"mensagem": resumo})
 
 @app.route('/relatorio_semanal', methods=['GET'])
