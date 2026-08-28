@@ -424,9 +424,11 @@ def webhook(subpath=None):
 			else:
 				return jsonify({"status": "empty"}), 200
 				
-		# No Evolution API v2, os dados reais vêm dentro de 'message'
-		msg_container = dados.get('message', dados)
-		key = msg_container.get('key', {})
+		evento = dados_completos.get('event', '')
+		if evento and evento != 'messages.upsert':
+			return jsonify({"status": f"ignorado_evento_{evento}"}), 200
+				
+		key = dados.get('key', {})
 		
 		# Ignora mensagens enviadas pelo próprio bot/instância
 		if key.get('fromMe', False):
@@ -437,6 +439,11 @@ def webhook(subpath=None):
 			return jsonify({"status": "ignorado_status"}), 200
 			
 		numero = key.get('participant', chat_id)
+		
+		# Novo WhatsApp (LID) - Se veio o LID, tentamos pegar o número alternativo se existir
+		numero_alt = key.get('participantAlt', key.get('remoteJidAlt', ''))
+		if numero_alt:
+			numero = numero_alt
 		
 		# Normaliza formato para @c.us
 		if numero and '@s.whatsapp.net' in numero:
@@ -451,14 +458,14 @@ def webhook(subpath=None):
 				print(f"🔒 [DEBUG] Bloqueado! O número recebido não bate com o NUMERO_TESTE: '{NUMERO_TESTE}'")
 				return jsonify({"status": "ignorado"}), 200
 		
-		nome_enviado = msg_container.get('pushName')
+		nome_enviado = dados.get('pushName')
 		nome_cliente = nome_enviado if nome_enviado else numero.split('@')[0]
 		
 		is_group = chat_id.endswith('@g.us')
-		contexto_grupo = msg_container.get('groupContext', {})
+		contexto_grupo = dados.get('groupContext', {})
 		nome_grupo = contexto_grupo.get('groupName', 'Grupo' if is_group else 'Privado')
 		
-		msg_obj = msg_container.get('message', {})
+		msg_obj = dados.get('message', {})
 		mensagem = ""
 		if isinstance(msg_obj, dict):
 			if 'conversation' in msg_obj:
