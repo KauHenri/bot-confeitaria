@@ -25,6 +25,10 @@ MENSAGENS_PROCESSADAS = deque(maxlen=200)
 
 load_dotenv()
 
+# --- VARIÁVEIS DE TESTE ---
+FORCAR_STATUS_LOJA = None  # Pode ser True (Aberta), False (Fechada), ou None (Automático)
+HORARIO_FALSO = "" # Ex: "Domingo, 14:00" para injetar no prompt
+
 # Configurações globais
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 PLANILHA_ID = os.getenv("PLANILHA_ID")
@@ -58,9 +62,12 @@ def salvar_historico():
 historico_conversas = carregar_historico()
 
 def obter_contexto_data():
+	global HORARIO_FALSO
+	if HORARIO_FALSO:
+		return f"Hoje é {HORARIO_FALSO} (HORÁRIO SIMULADO PARA TESTES)."
 	agora = datetime.now()
 	dia_semana = agora.strftime("%A")
-	data_formatada = agora.strftime("%d/%m/%Y")
+	data_formatada = agora.strftime("%d/%m/%Y, %H:%M")
 	return f"Hoje é {dia_semana}, dia {data_formatada}."
 
 # --- CONFIGURAÇÕES DE TESTE E ADMIN ---
@@ -102,6 +109,9 @@ HORA_FECHA = 18
 MODO_CORUJA_TESTE = True
 
 def verificar_loja_aberta():
+	global FORCAR_STATUS_LOJA
+	if FORCAR_STATUS_LOJA is not None:
+		return FORCAR_STATUS_LOJA
 	if MODO_CORUJA_TESTE:
 		return True
 	hora_atual = datetime.now().hour
@@ -1414,6 +1424,112 @@ def api_painel_tarefas_toggle():
         return jsonify({"status": "sucesso"}), 200
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
+
+# =========================================================================
+# 🧪 ROTAS DO PAINEL DE TESTES
+# =========================================================================
+
+@app.route('/testes', methods=['GET'])
+def render_testes():
+    return render_template('testes.html')
+
+@app.route('/api/testes/status_loja', methods=['POST'])
+def api_testes_status_loja():
+    global FORCAR_STATUS_LOJA
+    req = request.json or {}
+    status = req.get('status')
+    if status is True:
+        FORCAR_STATUS_LOJA = True
+        msg = "Loja forçada a ficar ABERTA."
+    elif status is False:
+        FORCAR_STATUS_LOJA = False
+        msg = "Loja forçada a ficar FECHADA."
+    else:
+        FORCAR_STATUS_LOJA = None
+        msg = "Modo automático de horário ativado."
+    print(f"🧪 [TESTE] {msg}")
+    return jsonify({"message": msg}), 200
+
+@app.route('/api/testes/tempo', methods=['POST'])
+def api_testes_tempo():
+    global HORARIO_FALSO
+    req = request.json or {}
+    horario = req.get('horario', '').strip()
+    HORARIO_FALSO = horario
+    msg = f"Horário Falso ativado: {horario}" if horario else "Horário Falso desativado. Relógio real ativo."
+    print(f"🧪 [TESTE] {msg}")
+    return jsonify({"message": msg}), 200
+
+@app.route('/api/testes/memoria', methods=['POST'])
+def api_testes_memoria():
+    global historico_conversas, MENSAGENS_PROCESSADAS
+    req = request.json or {}
+    tipo = req.get('tipo', 'tudo')
+    
+    if tipo in ('conversas', 'tudo'):
+        historico_conversas.clear()
+        salvar_historico()
+        msg = "Histórico de conversas limpo."
+    if tipo in ('cache', 'tudo'):
+        MENSAGENS_PROCESSADAS.clear()
+        msg = "Cache anti-spam limpo."
+    if tipo == 'tudo':
+        msg = "Toda a memória temporária foi limpa."
+        
+    print(f"🧪 [TESTE] {msg}")
+    return jsonify({"message": msg}), 200
+
+@app.route('/api/testes/gatilho', methods=['POST'])
+def api_testes_gatilho():
+    req = request.json or {}
+    nome = req.get('nome')
+    try:
+        if nome == 'briefing':
+            res = briefing_matinal().json
+            if res and res.get('mensagem') and ID_GRUPO_ADMIN:
+                enviar_whatsapp(ID_GRUPO_ADMIN, res['mensagem'])
+        elif nome == 'abertura':
+            abrir_loja_automatico()
+        elif nome == 'radar':
+            res = radar_vencimentos().json
+            if res and res.get('mensagem') and ID_GRUPO_ADMIN:
+                enviar_whatsapp(ID_GRUPO_ADMIN, res['mensagem'])
+        elif nome == 'relatorio':
+            res = relatorio_semanal().json
+            if res and res.get('mensagem') and ID_GRUPO_ADMIN:
+                enviar_whatsapp(ID_GRUPO_ADMIN, res['mensagem'])
+        elif nome == 'superintendencia':
+            res = estoque_automatico().json
+            cardapio = res.get('cardapio', '')
+            if cardapio and "vazio" not in cardapio and "Não temos" not in cardapio:
+                if ID_GRUPO_SUPERINTENDENCIA:
+                    enviar_whatsapp(ID_GRUPO_SUPERINTENDENCIA, cardapio)
+        elif nome == 'apae':
+            res = estoque_automatico().json
+            cardapio = res.get('cardapio', '')
+            if cardapio and "vazio" not in cardapio and "Não temos" not in cardapio:
+                if ID_GRUPO_APAE:
+                    enviar_whatsapp(ID_GRUPO_APAE, cardapio)
+        elif nome == 'sobras':
+            res = conferir_final_rota().json
+            if res and res.get('mensagem') and ID_GRUPO_ADMIN:
+                enviar_whatsapp(ID_GRUPO_ADMIN, res['mensagem'])
+        elif nome == 'fechamento':
+            res = gatilho_seguranca_18h().json
+            if res and res.get('mensagem') and ID_GRUPO_ADMIN:
+                enviar_whatsapp(ID_GRUPO_ADMIN, res['mensagem'])
+        elif nome == 'backup':
+            res = backup_diario().json
+            if res and res.get('mensagem') and ID_GRUPO_ADMIN:
+                enviar_whatsapp(ID_GRUPO_ADMIN, res['mensagem'])
+        else:
+            return jsonify({"error": "Gatilho desconhecido"}), 400
+            
+        print(f"🧪 [TESTE] Gatilho {nome} disparado com sucesso.")
+        return jsonify({"message": f"Gatilho {nome} disparado!"}), 200
+    except Exception as e:
+        print(f"❌ [TESTE ERRO] Falha no gatilho {nome}: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
 	print("Servidor rodando...")

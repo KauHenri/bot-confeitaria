@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel de Testes do Bot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-800">
+    <div class="max-w-4xl mx-auto p-4" x-data="testPanel()">
+        <header class="mb-6 flex justify-between items-center bg-white p-4 rounded-lg shadow">
+            <div>
+                <h1 class="text-2xl font-bold text-purple-700">Painel de Testes 🧪</h1>
+                <p class="text-sm text-gray-500">Controle o ambiente para simular cenários</p>
+            </div>
+            <div>
+                <a href="/painel" class="text-blue-500 hover:underline font-medium">Voltar ao Painel Web</a>
+            </div>
+        </header>
+
+        <!-- Notificações -->
+        <div x-show="mensagem" class="mb-4 p-3 rounded-md text-white transition-all shadow-lg"
+             :class="isErro ? 'bg-red-500' : 'bg-green-500'" 
+             x-text="mensagem" style="display: none;"></div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            <!-- Controle de Estado -->
+            <div class="bg-white p-5 rounded-lg shadow">
+                <h2 class="text-xl font-semibold mb-4 border-b pb-2">🕹️ Controle de Estado</h2>
+                
+                <div class="space-y-4">
+                    <div>
+                        <p class="text-sm font-bold mb-2 text-gray-700">Forçar Status da Loja:</p>
+                        <div class="flex flex-col space-y-2 sm:flex-row sm:space-y-0 sm:space-x-2">
+                            <button @click="forcarStatusLoja(true)" class="flex-1 bg-green-100 hover:bg-green-200 text-green-800 py-2 rounded font-medium border border-green-300 transition-colors">
+                                🔓 Forçar ABERTA
+                            </button>
+                            <button @click="forcarStatusLoja(false)" class="flex-1 bg-red-100 hover:bg-red-200 text-red-800 py-2 rounded font-medium border border-red-300 transition-colors">
+                                🔒 Forçar FECHADA
+                            </button>
+                            <button @click="forcarStatusLoja(null)" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 py-2 rounded font-medium border border-gray-300 transition-colors">
+                                🕒 Automático
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="pt-2 border-t">
+                        <p class="text-sm font-bold mb-1 text-gray-700">Máquina do Tempo (Simular Horário para a IA):</p>
+                        <p class="text-xs text-gray-500 mb-2">Ex: "Domingo, 14:00" ou "Segunda, 07:00". Deixe vazio para voltar ao relógio real.</p>
+                        <div class="flex space-x-2">
+                            <input type="text" x-model="horarioFalso" placeholder="Ex: Domingo, 14:00" class="flex-1 border border-gray-300 p-2 rounded focus:outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50">
+                            <button @click="definirTempo()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded font-medium transition-colors">Aplicar</button>
+                            <button @click="horarioFalso = ''; definirTempo()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded font-medium transition-colors">Reset</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Limpeza de Memória -->
+            <div class="bg-white p-5 rounded-lg shadow">
+                <h2 class="text-xl font-semibold mb-4 border-b pb-2">🧹 Amnésia / Limpeza</h2>
+                <p class="text-sm text-gray-600 mb-4">Use isso para simular que você é um cliente que nunca conversou com o bot antes.</p>
+                
+                <div class="space-y-3">
+                    <button @click="limparMemoria('conversas')" class="w-full bg-yellow-100 hover:bg-yellow-200 text-yellow-800 py-2 rounded font-medium border border-yellow-300 transition-colors">
+                        Zerar Histórico de Conversas (IA)
+                    </button>
+                    <button @click="limparMemoria('cache')" class="w-full bg-orange-100 hover:bg-orange-200 text-orange-800 py-2 rounded font-medium border border-orange-300 transition-colors">
+                        Zerar Cache Anti-Spam
+                    </button>
+                    <button @click="limparMemoria('tudo')" class="w-full bg-red-600 hover:bg-red-700 text-white py-2 rounded font-medium shadow transition-colors">
+                        🚨 LIMPAR TUDO (Reset Completo)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Gatilhos Manuais -->
+            <div class="bg-white p-5 rounded-lg shadow md:col-span-2">
+                <h2 class="text-xl font-semibold mb-4 border-b pb-2">⚡ Gatilhos Manuais (Simular Rotinas)</h2>
+                <p class="text-sm text-gray-600 mb-4">Clique para executar funções programadas agora. Isso enviará mensagens reais no WhatsApp caso configurado.</p>
+                
+                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    <button @click="dispararGatilho('briefing')" class="bg-blue-50 border border-blue-200 hover:bg-blue-100 p-3 rounded-lg text-left shadow-sm transition-colors">
+                        <span class="block text-2xl mb-1">🌅</span>
+                        <span class="font-medium text-blue-900 text-sm">Briefing Matinal</span>
+                    </button>
+                    
+                    <button @click="dispararGatilho('abertura')" class="bg-green-50 border border-green-200 hover:bg-green-100 p-3 rounded-lg text-left shadow-sm transition-colors">
+                        <span class="block text-2xl mb-1">🔓</span>
+                        <span class="font-medium text-green-900 text-sm">Abrir Loja</span>
+                    </button>
+
+                    <button @click="dispararGatilho('radar')" class="bg-yellow-50 border border-yellow-200 hover:bg-yellow-100 p-3 rounded-lg text-left shadow-sm transition-colors">
+                        <span class="block text-2xl mb-1">📅</span>
+                        <span class="font-medium text-yellow-900 text-sm">Radar Vencimentos</span>
+                    </button>
+
+                    <button @click="dispararGatilho('relatorio')" class="bg-purple-50 border border-purple-200 hover:bg-purple-100 p-3 rounded-lg text-left shadow-sm transition-colors">
+                        <span class="block text-2xl mb-1">📊</span>
+                        <span class="font-medium text-purple-900 text-sm">Relatório Semanal</span>
+                    </button>
+
+                    <button @click="dispararGatilho('superintendencia')" class="bg-gray-50 border border-gray-200 hover:bg-gray-100 p-3 rounded-lg text-left shadow-sm transition-colors">
+                        <span class="block text-2xl mb-1">🏫</span>
+                        <span class="font-medium text-gray-900 text-sm">Superintendência</span>
+                    </button>
+
+                    <button @click="dispararGatilho('apae')" class="bg-gray-50 border border-gray-200 hover:bg-gray-100 p-3 rounded-lg text-left shadow-sm transition-colors">
+                        <span class="block text-2xl mb-1">🚌</span>
+                        <span class="font-medium text-gray-900 text-sm">Cardápio APAE</span>
+                    </button>
+
+                    <button @click="dispararGatilho('sobras')" class="bg-orange-50 border border-orange-200 hover:bg-orange-100 p-3 rounded-lg text-left shadow-sm transition-colors">
+                        <span class="block text-2xl mb-1">📦</span>
+                        <span class="font-medium text-orange-900 text-sm">Conf. Sobras</span>
+                    </button>
+
+                    <button @click="dispararGatilho('fechamento')" class="bg-red-50 border border-red-200 hover:bg-red-100 p-3 rounded-lg text-left shadow-sm transition-colors">
+                        <span class="block text-2xl mb-1">🔒</span>
+                        <span class="font-medium text-red-900 text-sm">Fechamento 18h</span>
+                    </button>
+
+                    <button @click="dispararGatilho('backup')" class="bg-slate-50 border border-slate-200 hover:bg-slate-100 p-3 rounded-lg text-left shadow-sm transition-colors md:col-span-4 sm:col-span-3 col-span-2">
+                        <span class="block text-2xl mb-1 text-center">💾</span>
+                        <span class="font-medium text-slate-900 text-sm block text-center">Fazer Backup Diário</span>
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        function testPanel() {
+            return {
+                mensagem: '',
+                isErro: false,
+                horarioFalso: '',
+
+                mostrarNotificacao(texto, erro = false) {
+                    this.mensagem = texto;
+                    this.isErro = erro;
+                    setTimeout(() => this.mensagem = '', 5000);
+                },
+
+                async apiCall(url, data) {
+                    try {
+                        const res = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(data)
+                        });
+                        const json = await res.json();
+                        if (res.ok) {
+                            this.mostrarNotificacao(json.message || 'Sucesso!');
+                        } else {
+                            this.mostrarNotificacao(json.error || 'Erro na requisição', true);
+                        }
+                    } catch (e) {
+                        this.mostrarNotificacao('Erro de conexão com o servidor local.', true);
+                    }
+                },
+
+                async forcarStatusLoja(status) {
+                    await this.apiCall('/api/testes/status_loja', { status: status });
+                },
+
+                async definirTempo() {
+                    await this.apiCall('/api/testes/tempo', { horario: this.horarioFalso });
+                },
+
+                async limparMemoria(tipo) {
+                    if (tipo === 'tudo' && !confirm('Tem certeza que deseja apagar toda a memória temporária do bot? Ele esquecerá quem estava atendendo agora mesmo.')) return;
+                    await this.apiCall('/api/testes/memoria', { tipo: tipo });
+                },
+
+                async dispararGatilho(nome) {
+                    if (!confirm(`Deseja realmente disparar o gatilho de ${nome} agora? Uma mensagem real poderá ser enviada no WhatsApp.`)) return;
+                    await this.apiCall('/api/testes/gatilho', { nome: nome });
+                }
+            }
+        }
+    </script>
+</body>
+</html>
