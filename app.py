@@ -857,7 +857,8 @@ def webhook(subpath=None):
 						status_loja = "EM_ROTA (A chefe está na rua fazendo entregas)"
 						aviso_rota = "\n⚠️ ATENÇÃO: A CHEFE ESTÁ NA RUA. VOCÊ DEVE AVISAR ISSO AO CLIENTE OBRIGATORIAMENTE."
 					elif status_manual == "FECHADO" or not verificar_loja_aberta():
-						status_loja = f"FECHADO (A confeitaria não está recebendo pedidos no momento)"
+						status_loja = f"FECHADO (A confeitaria não está recebendo pedidos no momento. NÃO mostre nenhum cardápio.)"
+						estoque_hoje = "[CARDÁPIO INDISPONÍVEL. A LOJA ESTÁ FECHADA. NÃO INFORME OPÇÕES AO CLIENTE.]"
 					else:
 						status_loja = "ABERTO"
 					
